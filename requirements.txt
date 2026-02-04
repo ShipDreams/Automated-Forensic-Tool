@@ -1,0 +1,17 @@
+# Android 自动取证 MVP 项目依赖
+
+# 核心依赖：无
+# 本项目仅使用 Python 标准库，无需安装额外依赖
+
+# Python 版本要求
+# python >= 3.8
+
+# 系统依赖
+# - adb (Android Debug Bridge)
+#   Mac 安装: brew install --cask android-platform-tools
+#   Linux 安装: apt-get install android-tools-adb
+#   Windows 安装: 下载 Android SDK Platform Tools
+
+# 可选依赖（用于开发和测试）
+# pytest>=7.0.0
+# black>=22.0.0

@@ -1,0 +1,39 @@
+{
+  "platform_name": "taobao",
+  "package_name": "com.taobao.taobao",
+  "main_activity": "com.taobao.taobao/.home.activity.MainActivity",
+  "url_patterns": [
+    "taobao.com",
+    "tmall.com",
+    "tb.cn",
+    "m.taobao.com"
+  ],
+  "app_store_search_keyword": "淘宝",
+  "ui_locator_rules": {
+    "search_box": {
+      "resource_ids": [
+        "com.taobao.taobao:id/searchEdit",
+        "com.taobao.taobao:id/search_edit",
+        "com.taobao.taobao:id/home_searchbar"
+      ],
+      "text_hints": ["搜索", "搜索淘宝商品", "搜索宝贝"]
+    },
+    "video_element": {
+      "resource_id_keywords": ["video", "player", "play", "media", "主图"],
+      "content_desc_keywords": ["播放", "视频", "play", "video"]
+    },
+    "shop_button": {
+      "text_keywords": ["店铺", "进店", "商铺"],
+      "position": "bottom_left"
+    },
+    "qualification_button": {
+      "text_keywords": ["资质证照", "证照", "营业执照", "企业资质"]
+    }
+  },
+  "wait_times": {
+    "app_launch": 10,
+    "page_load": 8,
+    "video_play": 3,
+    "shop_page": 4
+  }
+}

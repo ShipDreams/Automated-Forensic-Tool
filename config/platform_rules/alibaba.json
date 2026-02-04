@@ -1,0 +1,14 @@
+{
+  "platform_name": "alibaba",
+  "package_name": "com.alibaba.wireless",
+  "main_activity": "",
+  "url_patterns": [
+    "1688.com",
+    "m.1688.com",
+    "detail.1688.com"
+  ],
+  "app_store_search_keyword": "1688",
+  "ui_locator_rules": {},
+  "wait_times": {},
+  "_status": "TODO: 待实现"
+}

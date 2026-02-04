@@ -1,0 +1,14 @@
+{
+  "platform_name": "jd",
+  "package_name": "com.jingdong.app.mall",
+  "main_activity": "",
+  "url_patterns": [
+    "jd.com",
+    "m.jd.com",
+    "item.jd.com"
+  ],
+  "app_store_search_keyword": "京东",
+  "ui_locator_rules": {},
+  "wait_times": {},
+  "_status": "TODO: 待实现"
+}

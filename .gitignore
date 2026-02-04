@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# 测试缓存
+.pytest_cache/
+
+# macOS
+.DS_Store
+
+# 临时文件
+temp/
+src/temp/
+test_dump.xml
+
+# 日志
+logs/
+
+# 任务状态文件（运行时生成）
+tasks/pending/*.json
+tasks/completed/*.json
+tasks/failed/*.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 测试产出                                               │
+test_dump.xml 

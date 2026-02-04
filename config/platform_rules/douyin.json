@@ -1,0 +1,14 @@
+{
+  "platform_name": "douyin",
+  "package_name": "com.ss.android.ugc.aweme",
+  "main_activity": "",
+  "url_patterns": [
+    "douyin.com",
+    "v.douyin.com",
+    "m.douyin.com"
+  ],
+  "app_store_search_keyword": "抖音",
+  "ui_locator_rules": {},
+  "wait_times": {},
+  "_status": "TODO: 待实现"
+}

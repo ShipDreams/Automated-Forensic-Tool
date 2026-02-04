@@ -1,0 +1,19 @@
+{
+  "device_id": null,
+  "device_name": "Xiaomi 12S Pro",
+  "screen_resolution": {
+    "width": 1440,
+    "height": 3200
+  },
+  "recording_settings": {
+    "time_limit": 180,
+    "bit_rate": 8000000,
+    "video_play_duration": 30
+  },
+  "beijing_time_url": "https://www.beijing-time.org/",
+  "wait_times": {
+    "browser_load": 8,
+    "taobao_load": 8,
+    "video_start": 3
+  }
+}
