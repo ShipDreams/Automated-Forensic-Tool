@@ -21,25 +21,31 @@ class CooldownManager:
     核心功能：
     - 连续任务计数
     - 风险触发后自动冷却
-    - 冷却状态持久化
+    - 冷却状态持久化（支持按设备ID区分）
     """
 
-    def __init__(self, config: dict = None, state_file: str = None):
+    def __init__(self, config: dict = None, state_file: str = None, device_id: str = None):
         """
         初始化冷却管理器
 
         Args:
             config: 配置字典，来自 config/antibot.json 的 cooldown 部分
             state_file: 状态文件路径（用于持久化）
+            device_id: 设备 ID（用于多设备状态区分）
         """
         self.config = config or {}
+        self.device_id = device_id or "default"
         self._load_config()
 
-        # 状态文件
+        # 状态文件（支持按设备ID区分）
         if state_file:
             self.state_file = Path(state_file)
         else:
-            self.state_file = Path(__file__).parent.parent.parent / 'logs' / 'cooldown_state.json'
+            state_dir = Path(__file__).parent.parent.parent / 'logs'
+            state_dir.mkdir(parents=True, exist_ok=True)
+            # 使用设备ID作为文件名后缀
+            safe_device_id = self.device_id.replace(':', '_').replace('/', '_')
+            self.state_file = state_dir / f'cooldown_state_{safe_device_id}.json'
 
         # 运行时状态
         self.continuous_tasks = 0

@@ -609,6 +609,67 @@ class ADBController:
             logger.error(f"截图失败: {e}")
             return False
 
+    def force_stop_app(self, package_name: str) -> bool:
+        """
+        强制停止应用进程
+
+        Args:
+            package_name: 应用包名
+
+        Returns:
+            是否成功
+        """
+        try:
+            logger.info(f"强制停止应用: {package_name}")
+            result = self._run_adb_command(["shell", "am", "force-stop", package_name])
+            time.sleep(0.5)
+            return result.returncode == 0
+        except Exception as e:
+            logger.error(f"强制停止应用失败: {e}")
+            return False
+
+    def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> bool:
+        """
+        执行滑动操作
+
+        Args:
+            x1: 起始 x 坐标
+            y1: 起始 y 坐标
+            x2: 结束 x 坐标
+            y2: 结束 y 坐标
+            duration_ms: 滑动持续时间（毫秒）
+
+        Returns:
+            是否成功
+        """
+        try:
+            logger.debug(f"滑动: ({x1}, {y1}) -> ({x2}, {y2}), 时长 {duration_ms}ms")
+            result = self._run_adb_command([
+                "shell", "input", "swipe",
+                str(x1), str(y1), str(x2), str(y2), str(duration_ms)
+            ])
+            return result.returncode == 0
+        except Exception as e:
+            logger.error(f"滑动失败: {e}")
+            return False
+
+    def run_command(self, command: str) -> bool:
+        """
+        执行任意 shell 命令
+
+        Args:
+            command: 要执行的命令
+
+        Returns:
+            是否成功
+        """
+        try:
+            result = self._run_adb_command(["shell"] + command.split())
+            return result.returncode == 0
+        except Exception as e:
+            logger.error(f"执行命令失败: {e}")
+            return False
+
     def _run_adb_command(self, args: List[str]) -> subprocess.CompletedProcess:
         """执行 ADB 命令"""
         cmd = ["adb"]

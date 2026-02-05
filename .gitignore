@@ -29,5 +29,10 @@ tasks/failed/*.json
 *.swp
 *.swo
 
-# 测试产出                                               │
-test_dump.xml 
+# 测试产出
+test_dump.xml
+
+# 验证码POC（需要Root环境测试）
+tests/captcha_poc/
+
+task.csv

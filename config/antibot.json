@@ -33,5 +33,12 @@
     "trigger_on_risk": true,
     "duration_minutes": 15,
     "max_continuous_tasks": 10
+  },
+  "taobao": {
+    "tasks_per_cycle": [3, 5],
+    "cycles_before_cooldown": [3, 5],
+    "browse_duration_minutes": [2, 5],
+    "cooldown_duration_minutes": 15,
+    "click_offset_max_px": 5
   }
 }

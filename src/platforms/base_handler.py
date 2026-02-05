@@ -236,16 +236,21 @@ class BasePlatformHandler(ABC):
         if not self._check_risk():
             logger.warning("检测到风险状态，流程可能受阻")
 
-        # 步骤 4: 打开声音
-        logger.info("步骤 4: 打开视频声音")
-        self.unmute_video()  # 失败不影响流程
-        self._sleep_after_click()
+        # 步骤 4+5: 视频播放（打开音量 + 从头播放）
+        # 优先使用 replay_video_from_start（淘宝），否则使用旧的 unmute + play
+        logger.info("步骤 4-5: 视频播放（打开音量并从头播放）")
+        if hasattr(self, 'replay_video_from_start'):
+            self.replay_video_from_start()
+        else:
+            # 旧流程：先打开音量，再点击播放
+            logger.info("步骤 4: 打开视频声音")
+            self.unmute_video()
+            self._sleep_after_click()
 
-        # 步骤 5: 播放视频
-        logger.info("步骤 5: 播放商品视频")
-        video_played = self.play_video()
-        if not video_played:
-            logger.warning("未能自动播放视频，但继续录制")
+            logger.info("步骤 5: 播放商品视频")
+            video_played = self.play_video()
+            if not video_played:
+                logger.warning("未能自动播放视频，但继续录制")
 
         # 步骤 6: 持续录制
         logger.info(f"步骤 6: 持续录制 {video_play_duration} 秒")

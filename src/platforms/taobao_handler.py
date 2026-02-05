@@ -171,9 +171,14 @@ class TaobaoHandler(BasePlatformHandler):
             return False
 
     def play_video(self, max_attempts: int = 3) -> bool:
-        """播放商品视频"""
+        """
+        播放商品视频
+
+        注意：淘宝商品页视频通常自动播放，此方法现在仅作为备用。
+        主流程应使用 replay_video_from_start() 从头播放。
+        """
         logger.info("=" * 60)
-        logger.info("播放商品视频")
+        logger.info("播放商品视频（备用方法）")
         logger.info("=" * 60)
 
         # 使用 UI 定位器查找并点击视频
@@ -183,9 +188,58 @@ class TaobaoHandler(BasePlatformHandler):
             logger.info("✓ 视频播放已触发")
             self._sleep(2500, 3500)
         else:
-            logger.warning("⚠ 未能自动触发视频播放（可能商品无视频）")
+            logger.warning("⚠ 未能自动触发视频播放（可能商品无视频或已自动播放）")
 
         return success
+
+    def replay_video_from_start(self) -> bool:
+        """
+        将视频从头播放（拖动进度条到0秒）
+
+        淘宝商品页视频通常自动播放，此方法用于：
+        1. 如果视频暂停，先点击播放
+        2. 打开音量
+        3. 拖动进度条到开始位置，从头播放
+
+        Returns:
+            是否成功
+        """
+        logger.info("=" * 60)
+        logger.info("视频从头播放（打开音量 + 拖动进度条）")
+        logger.info("=" * 60)
+
+        # 检查视频是否暂停（播放按钮 iv_play_btn 可见表示暂停）
+        root = self.locator.dump_and_parse()
+        if root:
+            play_btn = self.locator.find_element_by_id(root, "com.taobao.taobao:id/iv_play_btn")
+            if play_btn:
+                logger.info("检测到视频处于暂停状态，点击播放按钮恢复播放...")
+                self.locator.click_element(play_btn, apply_offset=False)
+                self._sleep(1500, 2500)
+
+        # 打开音量
+        self.unmute_video(max_attempts=2)
+
+        # 拖动进度条到开始位置
+        logger.info("拖动视频进度条到开始位置...")
+        success = self.locator.drag_video_progress_to_start(max_attempts=2)
+
+        if success:
+            logger.info("✓ 视频已从头开始播放")
+        else:
+            logger.warning("⚠ 未能拖动进度条（视频可能继续当前播放）")
+
+        # 拖动进度条后，检测视频是否结束（播放按钮可见表示视频已暂停/结束）
+        self._sleep(500, 1000)
+        root = self.locator.dump_and_parse()
+        if root:
+            play_btn = self.locator.find_element_by_id(root, "com.taobao.taobao:id/iv_play_btn")
+            if play_btn:
+                logger.info("检测到播放按钮，点击恢复播放...")
+                self.locator.click_element(play_btn, apply_offset=False)
+                self._sleep(1000, 1500)
+
+        return True  # 即使拖动失败也继续流程
 
     def unmute_video(self, max_attempts: int = 2) -> bool:
         """打开视频声音"""
@@ -205,7 +259,8 @@ class TaobaoHandler(BasePlatformHandler):
 
             volume_btn = self.locator.find_volume_button(root)
             if volume_btn:
-                if self.locator.click_element(volume_btn):
+                # 音量按钮图标小，不加坐标偏移
+                if self.locator.click_element(volume_btn, apply_offset=False):
                     logger.info("✓ 已打开视频声音")
                     self._sleep(1500, 2500)
                     return True
