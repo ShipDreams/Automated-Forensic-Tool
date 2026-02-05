@@ -7,6 +7,7 @@ from .antibot import AntiBot
 from .human_simulator import HumanSimulator
 from .risk_detector import RiskDetector, RiskSignal, RiskType
 from .cooldown import CooldownManager
+from .taobao_antibot import TaobaoAntiBot
 
 __all__ = [
     'AntiBot',
@@ -15,4 +16,5 @@ __all__ = [
     'RiskSignal',
     'RiskType',
     'CooldownManager',
+    'TaobaoAntiBot',
 ]

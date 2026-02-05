@@ -287,6 +287,143 @@ class UILocator:
         logger.warning("所有策略均未找到视频元素")
         return None
 
+    def find_video_progress_bar(self, root: ET.Element) -> Optional[Tuple[int, int, int, int]]:
+        """
+        查找视频进度条的位置
+
+        Args:
+            root: UI 根节点
+
+        Returns:
+            进度条的边界坐标 (x1, y1, x2, y2) 或 None
+        """
+        logger.info("开始查找视频进度条...")
+
+        # 策略 0（优先）: 通过淘宝精确 resource-id 查找触控区域
+        # seek_touch_container 是进度条的触控区域（比进度条本身更大更容易拖动）
+        taobao_progress_ids = [
+            "com.taobao.taobao:id/seek_touch_container",
+            "com.taobao.taobao:id/pb_mini_progress",
+        ]
+        for res_id in taobao_progress_ids:
+            element = self.find_element_by_id(root, res_id)
+            if element:
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    logger.info(f"✓ 策略 0 成功: 通过精确 resource-id 找到进度条: {res_id}, bounds={bounds}")
+                    return bounds
+
+        # 策略 1: 通过 resource-id 模糊查找进度条
+        progress_ids = ['progress', 'seekbar', 'seek_bar', 'seek_touch', 'video_progress', 'player_progress']
+        for node in root.iter():
+            res_id = node.attrib.get('resource-id', '').lower()
+            for keyword in progress_ids:
+                if keyword in res_id:
+                    element = UIElement(node)
+                    bounds = element.get_bounds()
+                    if bounds and bounds != (0, 0, 0, 0):
+                        logger.info(f"✓ 策略 1 成功: 通过 resource-id 找到进度条: {res_id}")
+                        return bounds
+
+        # 策略 2: 通过 class 查找 SeekBar 或 ProgressBar
+        logger.info("策略 2: 查找 SeekBar/ProgressBar...")
+        for node in root.iter():
+            class_name = node.attrib.get('class', '').lower()
+            if 'seekbar' in class_name or 'progressbar' in class_name:
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    x1, y1, x2, y2 = bounds
+                    # 进度条通常是横向的（宽度 > 高度的3倍）
+                    width = x2 - x1
+                    height = y2 - y1
+                    if height > 0 and width > height * 3:
+                        logger.info(f"✓ 策略 2 成功: 找到 SeekBar, bounds={bounds}")
+                        return bounds
+
+        # 策略 3: 在视频区域底部查找横向细长元素
+        logger.info("策略 3: 在视频区域查找进度条形状的元素...")
+        screen_size = self.adb.get_screen_size()
+        if screen_size:
+            width, height = screen_size
+            # 视频区域通常在屏幕上半部分
+            video_region_height = height * 2 // 3
+
+            for node in root.iter():
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    x1, y1, x2, y2 = bounds
+                    # 在视频区域内
+                    if y2 <= video_region_height:
+                        elem_width = x2 - x1
+                        elem_height = y2 - y1
+                        # 进度条特征：宽度占屏幕50%以上、高度小
+                        if elem_width > width * 0.5 and elem_height > 0 and elem_height < 120 and elem_width > elem_height * 3:
+                            logger.info(f"✓ 策略 3 成功: 找到可能的进度条, bounds={bounds}")
+                            return bounds
+
+        logger.warning("未找到视频进度条")
+        return None
+
+    def drag_video_progress_to_start(self, max_attempts: int = 2) -> bool:
+        """
+        将视频进度条拖动到开始位置（0秒）
+
+        Args:
+            max_attempts: 最大尝试次数
+
+        Returns:
+            是否成功拖动
+        """
+        logger.info("尝试将视频进度条拖到开始位置...")
+
+        for attempt in range(1, max_attempts + 1):
+            logger.info(f"第 {attempt}/{max_attempts} 次尝试...")
+
+            root = self.dump_and_parse()
+            if not root:
+                logger.warning("无法获取 UI 层级")
+                continue
+
+            progress_bounds = self.find_video_progress_bar(root)
+            if progress_bounds:
+                x1, y1, x2, y2 = progress_bounds
+                # 从进度条中间位置拖到最左边
+                start_x = (x1 + x2) // 2
+                start_y = (y1 + y2) // 2
+                end_x = x1 + 10  # 留一点边距
+                end_y = start_y
+
+                logger.info(f"拖动进度条: ({start_x}, {start_y}) -> ({end_x}, {end_y})")
+                if self.adb.swipe(start_x, start_y, end_x, end_y, duration_ms=300):
+                    logger.info("✓ 视频进度条已拖到开始位置")
+                    return True
+                else:
+                    logger.warning("拖动操作失败")
+            else:
+                # 如果找不到进度条，尝试在视频区域底部进行拖动
+                logger.info("未找到进度条元素，尝试在视频区域底部拖动...")
+                screen_size = self.adb.get_screen_size()
+                if screen_size:
+                    width, height = screen_size
+                    # 视频区域通常在顶部1/3，进度条在视频底部
+                    video_bottom_y = height // 3
+                    start_x = width // 2
+                    end_x = width // 10
+
+                    logger.info(f"盲拖进度条: ({start_x}, {video_bottom_y}) -> ({end_x}, {video_bottom_y})")
+                    if self.adb.swipe(start_x, video_bottom_y, end_x, video_bottom_y, duration_ms=300):
+                        logger.info("✓ 盲拖完成")
+                        return True
+
+            if attempt < max_attempts:
+                import time
+                time.sleep(1)
+
+        logger.warning("⚠ 未能拖动视频进度条（继续流程）")
+        return False
+
     def find_app_store_open_button(self, root: ET.Element, prefer_first: bool = True) -> Optional[UIElement]:
         """
         查找应用商店的"打开"按钮（跨品牌通用）
@@ -408,16 +545,20 @@ class UILocator:
             return (x2 - x1) * (y2 - y1)
         return 0
 
-    def click_element(self, element: UIElement) -> bool:
+    def click_element(self, element: UIElement, apply_offset: bool = True, max_offset_px: int = 5) -> bool:
         """
-        点击元素（增强版，包含详细日志和可视化）
+        点击元素（增强版，包含详细日志、随机偏移和可视化）
 
         Args:
             element: 要点击的 UI 元素
+            apply_offset: 是否应用随机偏移（防封控）
+            max_offset_px: 最大偏移像素
 
         Returns:
             是否成功点击
         """
+        import random
+
         center = element.get_center()
         if not center:
             logger.error("无法获取元素中心点")
@@ -426,10 +567,31 @@ class UILocator:
         x, y = center
         bounds = element.get_bounds()
 
+        # 应用随机偏移（防封控）
+        original_x, original_y = x, y
+        if apply_offset and bounds:
+            x1, y1, x2, y2 = bounds
+            # 计算允许的偏移范围（不超出元素边界）
+            max_offset_x = min(max_offset_px, (x2 - x1) // 4)
+            max_offset_y = min(max_offset_px, (y2 - y1) // 4)
+
+            if max_offset_x > 0:
+                x += random.randint(-max_offset_x, max_offset_x)
+            if max_offset_y > 0:
+                y += random.randint(-max_offset_y, max_offset_y)
+
+            # 确保坐标仍在元素边界内
+            x = max(x1 + 1, min(x, x2 - 1))
+            y = max(y1 + 1, min(y, y2 - 1))
+
         # 详细记录点击信息
         logger.info("=" * 50)
         logger.info("准备点击元素:")
-        logger.info(f"  - 坐标: ({x}, {y})")
+        if apply_offset and (x != original_x or y != original_y):
+            logger.info(f"  - 原始坐标: ({original_x}, {original_y})")
+            logger.info(f"  - 偏移后坐标: ({x}, {y})")
+        else:
+            logger.info(f"  - 坐标: ({x}, {y})")
         logger.info(f"  - 边界: {bounds}")
         logger.info(f"  - 文本: {element.text}")
         logger.info(f"  - 描述: {element.content_desc}")
@@ -660,7 +822,17 @@ class UILocator:
         """
         logger.info("开始查找音量/静音按钮...")
 
-        # 策略 1: 通过 resource-id 查找
+        # 策略 0（优先）: 通过淘宝精确 resource-id 查找
+        taobao_mute_ids = [
+            "com.taobao.taobao:id/iv_mute_btn",
+        ]
+        for res_id in taobao_mute_ids:
+            element = self.find_element_by_id(root, res_id)
+            if element:
+                logger.info(f"✓ 策略 0 成功: 通过精确 resource-id 找到音量按钮: {res_id}")
+                return element
+
+        # 策略 1: 通过 resource-id 模糊查找
         volume_keywords = ['volume', 'mute', 'sound', 'audio', '音量', '静音']
         for node in root.iter():
             res_id = node.attrib.get('resource-id', '').lower()
@@ -671,7 +843,7 @@ class UILocator:
                     return element
 
         # 策略 2: 通过 content-desc 查找
-        desc_keywords = ['音量', '静音', '声音', 'volume', 'mute', 'sound']
+        desc_keywords = ['音量', '静音', '声音', '开启声音', '关闭声音', 'volume', 'mute', 'sound']
         for keyword in desc_keywords:
             element = self.find_element_by_desc(root, keyword, exact=False)
             if element:
@@ -743,7 +915,9 @@ class UILocator:
 
     def find_shop_button(self, root: ET.Element) -> Optional[UIElement]:
         """
-        查找商品页左下角的"店铺"按钮（增强版，支持父元素查找）
+        查找商品页底部导航栏的"店铺"按钮
+
+        注意：需要精确匹配，避免误点击"店铺4年老店"等描述性元素
 
         Args:
             root: UI 根节点
@@ -753,89 +927,81 @@ class UILocator:
         """
         logger.info("开始查找'店铺'按钮...")
 
-        # 策略 1: 通过 resource-id 查找（优先）
-        logger.info("策略 1: 通过 resource-id 查找...")
-        shop_id_keywords = ['shop', 'store', 'seller', 'merchant', '店铺', 'goto_shop', 'shop_entrance']
-        for node in root.iter():
-            res_id = node.attrib.get('resource-id', '').lower()
-            for keyword in shop_id_keywords:
-                if keyword in res_id:
-                    element = UIElement(node)
-                    bounds = element.get_bounds()
-                    if bounds and bounds != (0, 0, 0, 0):
-                        logger.info(f"✓ 策略 1 成功: 通过 resource-id 找到店铺按钮: {res_id}")
-                        return element
-
-        # 策略 2: 通过 text 查找，并查找可点击父元素
-        logger.info("策略 2: 通过 text 查找可点击父元素...")
-        shop_keywords = ['店铺', '进店', '店', '商铺']
-        for keyword in shop_keywords:
-            for node in root.iter():
-                text = node.attrib.get('text', '')
-                if keyword in text:
-                    element = UIElement(node)
-                    bounds = element.get_bounds()
-
-                    # 检查元素本身是否有效
-                    if bounds and bounds != (0, 0, 0, 0):
-                        logger.info(f"✓ 策略 2 成功: 通过 text 找到店铺按钮: {keyword}, bounds={bounds}")
-                        return element
-                    else:
-                        # 元素无效，尝试查找可点击父元素
-                        logger.info(f"text='{keyword}' 元素边界无效 {bounds}，查找可点击父元素...")
-                        parent = self._find_clickable_parent(root, node)
-                        if parent:
-                            logger.info(f"✓ 策略 2 成功: 通过 text 找到父元素")
-                            return parent
-
-        # 策略 3: 通过 content-desc 查找，并查找可点击父元素
-        logger.info("策略 3: 通过 content-desc 查找...")
-        for keyword in shop_keywords:
-            for node in root.iter():
-                desc = node.attrib.get('content-desc', '')
-                if keyword in desc:
-                    element = UIElement(node)
-                    bounds = element.get_bounds()
-
-                    if bounds and bounds != (0, 0, 0, 0):
-                        logger.info(f"✓ 策略 3 成功: 通过 content-desc 找到店铺按钮: {keyword}")
-                        return element
-                    else:
-                        logger.info(f"content-desc='{keyword}' 元素边界无效，查找可点击父元素...")
-                        parent = self._find_clickable_parent(root, node)
-                        if parent:
-                            logger.info(f"✓ 策略 3 成功: 通过 content-desc 找到父元素")
-                            return parent
-
-        # 策略 4: 左下角区域查找（确保有效边界）
-        logger.info("策略 4: 在左下角区域查找...")
         screen_size = self.adb.get_screen_size()
-        if screen_size:
-            width, height = screen_size
-            # 左下角区域
-            x1 = 0
-            y1 = height * 2 // 3
-            x2 = width // 2
-            clickable_elements = self.find_clickable_in_region(root, x1, y1, x2, height)
+        if not screen_size:
+            logger.warning("无法获取屏幕尺寸")
+            return None
 
-            # 优先选择包含店铺关键词的元素
-            for element in clickable_elements:
-                text = element.text
-                desc = element.content_desc
-                for keyword in shop_keywords:
-                    if keyword in text or keyword in desc:
-                        bounds = element.get_bounds()
-                        if bounds and bounds != (0, 0, 0, 0):
-                            logger.info(f"✓ 策略 4 成功: 左下角区域找到店铺按钮")
-                            return element
+        width, height = screen_size
+        # 底部导航栏区域（屏幕底部 1/6）
+        bottom_nav_y = height * 5 // 6
 
-            # 如果没有关键词匹配，选择左下角第一个可点击元素（可能是图标）
-            if clickable_elements:
-                element = clickable_elements[0]
+        # 策略 1: 在底部导航栏精确匹配 text="店铺"
+        logger.info("策略 1: 在底部导航栏精确匹配 text='店铺'...")
+        for node in root.iter():
+            text = node.attrib.get('text', '')
+            if text == '店铺':  # 精确匹配
+                element = UIElement(node)
                 bounds = element.get_bounds()
                 if bounds and bounds != (0, 0, 0, 0):
-                    logger.info(f"✓ 策略 4 成功: 左下角区域第一个可点击元素（无关键词）")
-                    return element
+                    x1, y1, x2, y2 = bounds
+                    # 确保在底部导航栏区域
+                    if y1 >= bottom_nav_y:
+                        logger.info(f"✓ 策略 1 成功: 精确匹配 text='店铺', bounds={bounds}")
+                        return element
+
+        # 策略 2: 在底部导航栏精确匹配 content-desc="店铺"
+        logger.info("策略 2: 在底部导航栏精确匹配 content-desc='店铺'...")
+        for node in root.iter():
+            desc = node.attrib.get('content-desc', '')
+            if desc == '店铺':  # 精确匹配
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    x1, y1, x2, y2 = bounds
+                    if y1 >= bottom_nav_y:
+                        logger.info(f"✓ 策略 2 成功: 精确匹配 content-desc='店铺', bounds={bounds}")
+                        return element
+
+        # 策略 3: 在底部导航栏查找包含"店铺"但不包含干扰词的元素
+        logger.info("策略 3: 在底部导航栏查找'店铺'（排除干扰词）...")
+        exclude_words = ['老店', '年', '旗舰', '专营', '信誉', '评分', '评价', '万+', '查看']
+        for node in root.iter():
+            text = node.attrib.get('text', '')
+            desc = node.attrib.get('content-desc', '')
+            combined = text + desc
+
+            if '店铺' in combined:
+                # 排除包含干扰词的元素
+                has_exclude = any(word in combined for word in exclude_words)
+                if has_exclude:
+                    logger.debug(f"排除干扰元素: {combined}")
+                    continue
+
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    x1, y1, x2, y2 = bounds
+                    if y1 >= bottom_nav_y:
+                        logger.info(f"✓ 策略 3 成功: 找到'店铺'按钮, bounds={bounds}")
+                        return element
+
+        # 策略 4: 在整个底部区域查找（放宽限制）
+        logger.info("策略 4: 在底部区域查找'店铺'...")
+        bottom_area_y = height * 2 // 3
+        for node in root.iter():
+            text = node.attrib.get('text', '')
+            desc = node.attrib.get('content-desc', '')
+
+            # 精确匹配或短文本匹配
+            if text == '店铺' or desc == '店铺' or (text == '店' and len(text) <= 2):
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    x1, y1, x2, y2 = bounds
+                    if y1 >= bottom_area_y:
+                        logger.info(f"✓ 策略 4 成功: 底部区域找到'店铺'按钮, bounds={bounds}")
+                        return element
 
         logger.warning("未找到'店铺'按钮")
         return None
@@ -852,12 +1018,45 @@ class UILocator:
         """
         logger.info("开始查找店铺名称或头像...")
 
+        # 需要排除的视频控制元素关键词
+        exclude_res_id_keywords = ['play', 'mute', 'video', 'sound', 'volume', 'seek', 'progress']
+        exclude_desc_keywords = ['播放', 'play', '静音', '音量', '返回', 'back', '按钮']
+
+        def _is_video_control(node) -> bool:
+            """判断节点是否为视频控制元素或导航按钮（需要排除的元素）"""
+            rid = node.attrib.get('resource-id', '').lower()
+            desc = node.attrib.get('content-desc', '').lower()
+            for kw in exclude_res_id_keywords:
+                if kw in rid:
+                    return True
+            for kw in exclude_desc_keywords:
+                if kw in desc:
+                    return True
+            return False
+
+        # 策略 0（优先）: 通过 content-desc="logoCover" 查找店铺头像
+        logger.info("策略 0: 通过 content-desc='logoCover' 查找店铺头像...")
+        for node in root.iter():
+            desc = node.attrib.get('content-desc', '')
+            if desc == 'logoCover':
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    # 优先查找可点击的父元素
+                    parent = self._find_clickable_parent(root, node)
+                    if parent:
+                        logger.info(f"✓ 策略 0 成功: 通过 logoCover 找到店铺头像（可点击父元素）, bounds={parent.get_bounds()}")
+                        return parent
+                    logger.info(f"✓ 策略 0 成功: 通过 logoCover 找到店铺头像, bounds={bounds}")
+                    return element
+
         # 策略 1: 通过 resource-id 查找
+        logger.info("策略 1: 通过 resource-id 查找店铺元素...")
         shop_ids = ['shop_name', 'store_name', 'shop_title', 'seller_name', 'avatar', 'shop_avatar']
         for res_id in shop_ids:
             for node in root.iter():
                 rid = node.attrib.get('resource-id', '').lower()
-                if res_id in rid:
+                if res_id in rid and not _is_video_control(node):
                     element = UIElement(node)
                     logger.info(f"✓ 策略 1 成功: 通过 resource-id 找到店铺元素: {rid}")
                     return element
@@ -872,6 +1071,10 @@ class UILocator:
             # 查找 ImageView
             for node in root.iter():
                 if 'imageview' in node.attrib.get('class', '').lower():
+                    # 排除视频控制元素
+                    if _is_video_control(node):
+                        continue
+
                     element = UIElement(node)
                     bounds = element.get_bounds()
                     if bounds:
@@ -881,7 +1084,7 @@ class UILocator:
                             width_e = x2 - x1
                             height_e = y2 - y1
                             if abs(width_e - height_e) < width_e * 0.2:  # 宽高比接近1:1
-                                logger.info(f"✓ 策略 2 成功: 找到顶部头像")
+                                logger.info(f"✓ 策略 2 成功: 找到顶部头像, bounds={bounds}")
                                 return element
 
         # 策略 3: 顶部区域的大字体 TextView（店铺名）
@@ -891,10 +1094,12 @@ class UILocator:
             top_region_height = height // 5
 
             clickable_elements = self.find_clickable_in_region(root, 0, 0, width, top_region_height)
-            # 优先选择有文字的元素
+            # 优先选择有文字的元素（排除视频控制元素）
             for element in clickable_elements:
+                if _is_video_control(element.node):
+                    continue
                 if element.text and len(element.text) > 0:
-                    logger.info(f"✓ 策略 3 成功: 找到顶部可点击元素（可能是店铺名）")
+                    logger.info(f"✓ 策略 3 成功: 找到顶部可点击元素（可能是店铺名）, text={element.text}")
                     return element
 
         logger.warning("未找到店铺名称或头像")
@@ -1100,6 +1305,9 @@ class UILocator:
         """
         查找实时保的"结束录屏"按钮
 
+        注意：录屏期间 UI dump 可能不准确，按钮显示"结束录屏"但 dump 出来的 text 可能是"开始录屏"。
+        因此优先通过 resource-id 定位。
+
         Args:
             root: UI 根节点
 
@@ -1108,58 +1316,37 @@ class UILocator:
         """
         logger.info("开始查找实时保'结束录屏'按钮...")
 
-        # 调试：打印所有包含"结束"或"录"的文本元素
-        logger.info("调试：搜索所有包含'结束'或'录'的元素...")
-        debug_count = 0
-        for node in root.iter():
-            text = node.attrib.get('text', '')
-            if text and ('结束' in text or '录' in text):
-                logger.info(f"  找到文本元素: text='{text}', class={node.attrib.get('class', '')}, clickable={node.attrib.get('clickable', '')}")
-                debug_count += 1
-        logger.info(f"调试：共找到 {debug_count} 个相关元素")
+        # 策略 1（优先）: 通过 resource-id 查找录屏按钮
+        # 录屏期间 text 可能不准确，但 resource-id 是稳定的
+        logger.info("策略 1: 通过 resource-id 查找...")
+        target_id = "com.a1010bao.web.rdbao:id/tv_screen_record"
+        element = self.find_element_by_id(root, target_id)
+        if element:
+            bounds = element.get_bounds()
+            if bounds and bounds != (0, 0, 0, 0):
+                logger.info(f"✓ 通过 resource-id 找到录屏按钮: {target_id}")
+                return element
 
-        # 策略 1: 通过 text 精确查找（改为 exact=True）
-        keywords = ['结束录屏', '停止录屏', '结束录制', '停止录制']
+        # 策略 2: 通过 text 精确查找
+        logger.info("策略 2: 通过 text 查找...")
+        keywords = ['结束录屏', '停止录屏', '结束录制', '停止录制', '开始录屏', '开始录制']
         for keyword in keywords:
-            logger.info(f"尝试精确匹配: '{keyword}'")
             element = self.find_element_by_text(root, keyword, exact=True)
             if element:
                 bounds = element.get_bounds()
-                logger.info(f"找到元素: bounds={bounds}, clickable={element.clickable}")
                 if bounds and bounds != (0, 0, 0, 0):
-                    logger.info(f"✓ 通过 text 精确匹配找到'{keyword}'")
+                    logger.info(f"✓ 通过 text 找到'{keyword}'")
                     return element
-                else:
-                    # 查找父元素
-                    logger.info(f"元素边界无效，查找父元素...")
-                    parent = self._find_clickable_parent(root, element.node)
-                    if parent:
-                        logger.info(f"✓ 通过 text 找到父元素")
-                        return parent
 
-        # 策略 2: 通过 text 包含查找（exact=False）
-        logger.info("策略 2: 尝试包含匹配...")
-        for keyword in ['结束', '停止']:
-            element = self.find_element_by_text(root, keyword, exact=False)
-            if element and '录' in element.text:  # 确保包含"录"字
+        # 策略 3: 通过 text 包含"录屏"查找
+        logger.info("策略 3: 查找包含'录屏'的元素...")
+        for node in root.iter():
+            text = node.attrib.get('text', '')
+            if '录屏' in text or '录制' in text:
+                element = UIElement(node)
                 bounds = element.get_bounds()
                 if bounds and bounds != (0, 0, 0, 0):
-                    logger.info(f"✓ 通过 text 包含匹配找到'{element.text}'")
-                    return element
-                else:
-                    parent = self._find_clickable_parent(root, element.node)
-                    if parent:
-                        logger.info(f"✓ 通过 text 包含匹配找到父元素")
-                        return parent
-
-        # 策略 3: 通过 content-desc 查找
-        logger.info("策略 3: 通过 content-desc 查找...")
-        for keyword in keywords:
-            element = self.find_element_by_desc(root, keyword, exact=False)
-            if element:
-                bounds = element.get_bounds()
-                if bounds and bounds != (0, 0, 0, 0):
-                    logger.info(f"✓ 通过 content-desc 找到'{keyword}'")
+                    logger.info(f"✓ 找到包含'录屏'的按钮: text='{text}'")
                     return element
 
         logger.warning("未找到实时保'结束录屏'按钮")

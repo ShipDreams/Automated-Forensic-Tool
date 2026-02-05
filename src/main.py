@@ -20,7 +20,7 @@ try:
     from core.recorder import ScreenRecorder
     from core.ui_locator import UILocator
     from platforms import PlatformRouter
-    from antibot import AntiBot
+    from antibot import AntiBot, TaobaoAntiBot
     from task import TaskManager, Task, TaskResult
 except ImportError as e:
     print(f"导入模块失败: {e}")
@@ -31,6 +31,7 @@ except ImportError as e:
     from ui_locator import UILocator
     PlatformRouter = None
     AntiBot = None
+    TaobaoAntiBot = None
     TaskManager = None
 
 logging.basicConfig(
@@ -358,14 +359,33 @@ class EvidenceCollector:
         return True
 
 
-def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 30):
+def _load_taobao_antibot_config() -> dict:
+    """加载淘宝防封控配置"""
+    config_path = Path(__file__).parent.parent / 'config' / 'antibot.json'
+    if config_path.exists():
+        try:
+            import json
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            return config.get('taobao', {})
+        except Exception as e:
+            logger.warning(f"加载淘宝防封控配置失败: {e}")
+    return {}
+
+
+def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 30, enable_antibot: bool = True):
     """
     批量模式：从文件加载任务并依次执行
+
+    支持淘宝专用防封控策略：
+    - 每 3-5 个任务执行人类浏览模拟
+    - 每 3-5 个周期进入 15 分钟冷却期
 
     Args:
         task_file: 任务文件路径（JSON/CSV/TXT）
         device_id: 设备 ID
         video_duration: 视频录制时长
+        enable_antibot: 是否启用防封控
     """
     if not TaskManager:
         logger.error("TaskManager 模块不可用，无法使用批量模式")
@@ -377,8 +397,36 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
     logger.info("=" * 60)
 
     # 初始化
-    collector = EvidenceCollector(device_id=device_id)
+    collector = EvidenceCollector(device_id=device_id, enable_antibot=enable_antibot)
     task_manager = TaskManager()
+
+    # 初始化淘宝防封控（如果启用）
+    taobao_antibot = None
+    if enable_antibot and TaobaoAntiBot:
+        try:
+            taobao_config = _load_taobao_antibot_config()
+            taobao_antibot = TaobaoAntiBot(
+                adb_controller=collector.adb,
+                ui_locator=collector.locator,
+                config=taobao_config,
+                device_id=collector.adb.device_id
+            )
+            logger.info("✓ 淘宝防封控模块已启用")
+            status = taobao_antibot.get_status()
+            logger.info(f"  当前状态: 周期内任务 {status['tasks_in_cycle']}/{status['tasks_per_cycle_target']}, "
+                       f"已完成周期 {status['completed_cycles']}/{status['cycles_before_cooldown_target']}")
+
+            # 检查是否在冷却期
+            if taobao_antibot.is_cooling_down():
+                remaining = taobao_antibot.get_remaining_cooldown()
+                logger.warning(f"⚠ 当前设备处于冷却期，剩余 {int(remaining.total_seconds())} 秒")
+                logger.info("等待冷却期结束...")
+                time.sleep(remaining.total_seconds())
+                logger.info("✓ 冷却期已结束，继续执行")
+
+        except Exception as e:
+            logger.warning(f"淘宝防封控初始化失败: {e}")
+            taobao_antibot = None
 
     # 加载任务
     count = task_manager.load_tasks_from_file(task_file)
@@ -393,10 +441,51 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
         """任务执行函数"""
         logger.info(f"执行任务: {task.id} - {task.product_url[:50]}...")
 
+        # 检查冷却状态
+        if taobao_antibot and taobao_antibot.is_cooling_down():
+            remaining = taobao_antibot.get_remaining_cooldown()
+            logger.warning(f"当前处于冷却期，剩余 {int(remaining.total_seconds())} 秒")
+            logger.info("等待冷却期结束...")
+            time.sleep(remaining.total_seconds())
+            logger.info("✓ 冷却期已结束")
+
         success = collector.run_full_process(
             product_url=task.product_url,
             video_play_duration=task.video_duration or video_duration
         )
+
+        # 记录任务完成并检查是否需要防封控动作（无论成功失败都计数）
+        try:
+            if taobao_antibot:
+                # 检测是否是淘宝链接
+                is_taobao = 'taobao' in task.product_url.lower() or 'tmall' in task.product_url.lower() or 'tb.cn' in task.product_url.lower()
+                logger.info(f"防封控检查: is_taobao={is_taobao}, url={task.product_url[:50]}")
+                if is_taobao:
+                    should_browse, should_cooldown = taobao_antibot.record_task_complete()
+                    status = taobao_antibot.get_status()
+                    logger.info(f"防封控状态: 周期内任务={status['tasks_in_cycle']}/{status['tasks_per_cycle_target']}, "
+                               f"已完成周期={status['completed_cycles']}/{status['cycles_before_cooldown_target']}, "
+                               f"should_browse={should_browse}, should_cooldown={should_cooldown}")
+
+                    if should_browse:
+                        logger.info("=" * 60)
+                        logger.info("触发周期结束动作：模拟人类浏览")
+                        logger.info("=" * 60)
+                        taobao_antibot.execute_cycle_end_actions()
+
+                    if should_cooldown:
+                        taobao_antibot.trigger_cooldown("完成多个周期")
+                        # 关闭淘宝进程
+                        taobao_antibot.close_taobao()
+            else:
+                logger.warning("防封控未启用: taobao_antibot 为 None")
+        except Exception as e:
+            logger.error(f"防封控处理异常: {e}", exc_info=True)
+
+        # 每个任务结束后关闭两个App，保证下次任务初始状态
+        logger.info("关闭淘宝和实时保进程，确保下次任务初始状态...")
+        collector.adb.force_stop_app("com.taobao.taobao")
+        collector.adb.force_stop_app("com.a1010bao.web.rdbao")
 
         return TaskResult(
             success=success,
@@ -407,6 +496,11 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
 
     # 执行所有任务
     stats = task_manager.run_all(delay_between_tasks=10)
+
+    # 任务全部完成后关闭淘宝
+    if taobao_antibot:
+        logger.info("所有任务完成，关闭淘宝进程")
+        taobao_antibot.close_taobao()
 
     return stats['failed'] == 0
 
@@ -466,7 +560,8 @@ def main():
         success = run_batch_mode(
             task_file=args.batch,
             device_id=args.device,
-            video_duration=args.play_duration
+            video_duration=args.play_duration,
+            enable_antibot=not args.no_antibot
         )
         sys.exit(0 if success else 1)
 
