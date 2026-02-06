@@ -6,6 +6,7 @@ Task Layer - 任务管理层
 from .task_manager import TaskManager
 from .task_model import Task, TaskStatus, TaskResult, TaskPriority
 from .task_loader import TaskLoader
+from .task_dispatcher import TaskDispatcher, DispatchStrategy
 
 __all__ = [
     'TaskManager',
@@ -14,4 +15,6 @@ __all__ = [
     'TaskResult',
     'TaskPriority',
     'TaskLoader',
+    'TaskDispatcher',
+    'DispatchStrategy',
 ]
