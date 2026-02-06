@@ -4,6 +4,7 @@
 负责任务队列管理、调度、执行、重试
 """
 
+import json
 import logging
 import time
 from typing import Optional, List, Callable, Dict, Any
@@ -55,6 +56,9 @@ class TaskManager:
         self.tasks_dir = self.loader.tasks_dir
         self.max_retries = max_retries
         self.retry_delay = retry_delay
+
+        # 源文件路径（用于报告）
+        self.source_file: Optional[str] = None
 
         # 任务队列
         self._queue: PriorityQueue = PriorityQueue()
@@ -143,6 +147,7 @@ class TaskManager:
             加载的任务数量
         """
         path = Path(file_path)
+        self.source_file = str(path.resolve())  # 记录源文件路径
 
         if path.suffix == '.json':
             tasks = self.loader.load_from_json(file_path)
@@ -205,7 +210,6 @@ class TaskManager:
 
         # 标记运行中
         task.mark_running()
-        self._save_task(task)
 
         # 触发回调
         for callback in self._on_task_start:
@@ -238,8 +242,6 @@ class TaskManager:
             self._handle_task_failure(task, str(e))
             result = TaskResult(success=False, error=str(e))
 
-        # 保存最终状态
-        self._save_task(task)
         return result
 
     def _handle_task_failure(self, task: Task, error: str):
@@ -321,13 +323,6 @@ class TaskManager:
 
         return self.execute_task(task)
 
-    def _save_task(self, task: Task):
-        """保存任务状态"""
-        try:
-            task.save_to_file(self.tasks_dir)
-        except Exception as e:
-            logger.error(f"保存任务状态失败: {e}")
-
     def _print_stats(self):
         """打印执行统计"""
         logger.info("=" * 50)
@@ -391,7 +386,6 @@ class TaskManager:
             return False
 
         task.mark_cancelled()
-        self._save_task(task)
         return True
 
     def clear_queue(self):
@@ -413,3 +407,81 @@ class TaskManager:
             'start_time': None,
             'end_time': None,
         }
+
+    # ==================== 报告生成 ====================
+
+    def generate_report(self, output_dir: str = None) -> str:
+        """
+        生成批量任务汇总报告
+
+        Args:
+            output_dir: 报告输出目录，默认为项目根目录下的 reports/
+
+        Returns:
+            报告文件路径
+        """
+        # 确定输出目录
+        if output_dir:
+            reports_dir = Path(output_dir)
+        else:
+            # 默认放在项目根目录的 reports/ 下
+            reports_dir = Path(__file__).parent.parent.parent / 'reports'
+
+        reports_dir.mkdir(parents=True, exist_ok=True)
+
+        # 生成报告文件名
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        report_file = reports_dir / f'batch_report_{timestamp}.json'
+
+        # 计算耗时
+        duration_seconds = 0
+        if self.stats['start_time'] and self.stats['end_time']:
+            start = datetime.fromisoformat(self.stats['start_time'])
+            end = datetime.fromisoformat(self.stats['end_time'])
+            duration_seconds = int((end - start).total_seconds())
+
+        # 统计各状态任务数
+        pending_count = len([t for t in self._all_tasks.values()
+                            if t.status == TaskStatus.PENDING])
+
+        # 构建任务列表（简化字段）
+        tasks_list = []
+        for task in self._all_tasks.values():
+            task_info = {
+                'id': task.id,
+                'url': task.product_url,
+                'status': task.status.value,
+            }
+
+            # 添加时间信息（如果有）
+            if task.started_at:
+                task_info['started_at'] = task.started_at
+            if task.completed_at:
+                task_info['completed_at'] = task.completed_at
+
+            # 添加错误信息（如果失败）
+            if task.status == TaskStatus.FAILED and task.result and task.result.error:
+                task_info['error'] = task.result.error
+
+            tasks_list.append(task_info)
+
+        # 构建报告
+        report = {
+            'report_time': datetime.now().isoformat(),
+            'source_file': self.source_file,
+            'summary': {
+                'total': self.stats['total'],
+                'completed': self.stats['completed'],
+                'failed': self.stats['failed'],
+                'pending': pending_count,
+                'duration_seconds': duration_seconds,
+            },
+            'tasks': tasks_list
+        }
+
+        # 写入文件
+        with open(report_file, 'w', encoding='utf-8') as f:
+            json.dump(report, f, ensure_ascii=False, indent=2)
+
+        logger.info(f"✓ 汇总报告已生成: {report_file}")
+        return str(report_file)

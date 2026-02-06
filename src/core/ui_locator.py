@@ -210,7 +210,7 @@ class UILocator:
 
     def find_video_element(self, root: ET.Element, strategies: Optional[List[str]] = None) -> Optional[UIElement]:
         """
-        使用多策略查找视频播放元素
+        使用多策略查找视频播放元素（精确匹配版）
 
         Args:
             root: UI 根节点
@@ -220,11 +220,11 @@ class UILocator:
             找到的元素或 None
         """
         if strategies is None:
-            strategies = ['resource_id', 'content_desc', 'text', 'class_region']
+            strategies = ['resource_id', 'content_desc']
 
         logger.info("开始查找视频播放元素...")
 
-        # 策略 1: 通过 resource-id 查找
+        # 策略 1: 通过 resource-id 查找（包含匹配，因为 resource-id 通常是唯一标识）
         if 'resource_id' in strategies:
             logger.info("策略 1: 通过 resource-id 查找...")
             video_keywords = ['video', 'player', 'play', 'media']
@@ -237,54 +237,21 @@ class UILocator:
                             logger.info(f"✓ 策略 1 成功: resource-id={res_id}")
                             return element
 
-        # 策略 2: 通过 content-desc 查找
+        # 策略 2: 通过 content-desc 精确匹配
         if 'content_desc' in strategies:
-            logger.info("策略 2: 通过 content-desc 查找...")
-            desc_keywords = ['播放', '视频', 'play', 'video', '主图']
+            logger.info("策略 2: 通过 content-desc 精确匹配...")
+            # 精确匹配的关键词列表
+            exact_desc_keywords = ['播放', '视频', 'play', 'video', '主图', '播放视频', '点击播放']
             for node in root.iter():
-                desc = node.attrib.get('content-desc', '').lower()
-                for keyword in desc_keywords:
-                    if keyword in desc:
-                        element = UIElement(node)
-                        if element.clickable:
-                            logger.info(f"✓ 策略 2 成功: content-desc={desc}")
-                            return element
+                desc = node.attrib.get('content-desc', '')
+                # 精确匹配（忽略大小写）
+                if desc.lower() in [k.lower() for k in exact_desc_keywords]:
+                    element = UIElement(node)
+                    if element.clickable:
+                        logger.info(f"✓ 策略 2 成功: content-desc={desc}")
+                        return element
 
-        # 策略 3: 通过 text 查找
-        if 'text' in strategies:
-            logger.info("策略 3: 通过 text 查找...")
-            text_keywords = ['播放', '视频', 'play']
-            for node in root.iter():
-                text = node.attrib.get('text', '').lower()
-                for keyword in text_keywords:
-                    if keyword in text:
-                        element = UIElement(node)
-                        if element.clickable:
-                            logger.info(f"✓ 策略 3 成功: text={text}")
-                            return element
-
-        # 策略 4: 通过坐标区域推测（顶部 1/3 区域的可点击元素）
-        if 'class_region' in strategies:
-            logger.info("策略 4: 通过坐标区域查找...")
-            screen_size = self.adb.get_screen_size()
-            if screen_size:
-                width, height = screen_size
-                # 淘宝商品页视频通常在顶部 1/3 区域
-                region_height = height // 3
-                clickable_elements = self.find_clickable_in_region(root, 0, 0, width, region_height)
-
-                # 优先选择面积较大的元素（更可能是视频区域）
-                if clickable_elements:
-                    sorted_elements = sorted(
-                        clickable_elements,
-                        key=lambda e: self._get_element_area(e),
-                        reverse=True
-                    )
-                    element = sorted_elements[0]
-                    logger.info(f"✓ 策略 4 成功: 顶部区域最大可点击元素")
-                    return element
-
-        logger.warning("所有策略均未找到视频元素")
+        logger.warning("未找到视频元素（商品可能无视频）")
         return None
 
     def find_video_progress_bar(self, root: ET.Element) -> Optional[Tuple[int, int, int, int]]:
@@ -915,9 +882,7 @@ class UILocator:
 
     def find_shop_button(self, root: ET.Element) -> Optional[UIElement]:
         """
-        查找商品页底部导航栏的"店铺"按钮
-
-        注意：需要精确匹配，避免误点击"店铺4年老店"等描述性元素
+        查找商品页左下角的"店铺"按钮（精确匹配版）
 
         Args:
             root: UI 根节点
@@ -927,81 +892,56 @@ class UILocator:
         """
         logger.info("开始查找'店铺'按钮...")
 
-        screen_size = self.adb.get_screen_size()
-        if not screen_size:
-            logger.warning("无法获取屏幕尺寸")
-            return None
+        # 策略 1: 通过 resource-id 查找（优先）
+        logger.info("策略 1: 通过 resource-id 查找...")
+        shop_id_keywords = ['shop', 'store', 'seller', 'merchant', '店铺', 'goto_shop', 'shop_entrance']
+        for node in root.iter():
+            res_id = node.attrib.get('resource-id', '').lower()
+            for keyword in shop_id_keywords:
+                if keyword in res_id:
+                    element = UIElement(node)
+                    bounds = element.get_bounds()
+                    if bounds and bounds != (0, 0, 0, 0):
+                        logger.info(f"✓ 策略 1 成功: 通过 resource-id 找到店铺按钮: {res_id}")
+                        return element
 
-        width, height = screen_size
-        # 底部导航栏区域（屏幕底部 1/6）
-        bottom_nav_y = height * 5 // 6
-
-        # 策略 1: 在底部导航栏精确匹配 text="店铺"
-        logger.info("策略 1: 在底部导航栏精确匹配 text='店铺'...")
+        # 策略 2: 通过 text 精确匹配"店铺"
+        logger.info("策略 2: 通过 text 精确匹配'店铺'...")
         for node in root.iter():
             text = node.attrib.get('text', '')
-            if text == '店铺':  # 精确匹配
+            if text == "店铺":  # 精确匹配
                 element = UIElement(node)
                 bounds = element.get_bounds()
-                if bounds and bounds != (0, 0, 0, 0):
-                    x1, y1, x2, y2 = bounds
-                    # 确保在底部导航栏区域
-                    if y1 >= bottom_nav_y:
-                        logger.info(f"✓ 策略 1 成功: 精确匹配 text='店铺', bounds={bounds}")
-                        return element
 
-        # 策略 2: 在底部导航栏精确匹配 content-desc="店铺"
-        logger.info("策略 2: 在底部导航栏精确匹配 content-desc='店铺'...")
+                # 检查元素本身是否有效
+                if bounds and bounds != (0, 0, 0, 0):
+                    logger.info(f"✓ 策略 2 成功: 通过 text 精确匹配找到店铺按钮, bounds={bounds}")
+                    return element
+                else:
+                    # 元素无效，尝试查找可点击父元素
+                    logger.info(f"text='店铺' 元素边界无效 {bounds}，查找可点击父元素...")
+                    parent = self._find_clickable_parent(root, node)
+                    if parent:
+                        logger.info(f"✓ 策略 2 成功: 通过 text 找到父元素")
+                        return parent
+
+        # 策略 3: 通过 content-desc 精确匹配"店铺"
+        logger.info("策略 3: 通过 content-desc 精确匹配'店铺'...")
         for node in root.iter():
             desc = node.attrib.get('content-desc', '')
-            if desc == '店铺':  # 精确匹配
+            if desc == "店铺":  # 精确匹配
                 element = UIElement(node)
                 bounds = element.get_bounds()
+
                 if bounds and bounds != (0, 0, 0, 0):
-                    x1, y1, x2, y2 = bounds
-                    if y1 >= bottom_nav_y:
-                        logger.info(f"✓ 策略 2 成功: 精确匹配 content-desc='店铺', bounds={bounds}")
-                        return element
-
-        # 策略 3: 在底部导航栏查找包含"店铺"但不包含干扰词的元素
-        logger.info("策略 3: 在底部导航栏查找'店铺'（排除干扰词）...")
-        exclude_words = ['老店', '年', '旗舰', '专营', '信誉', '评分', '评价', '万+', '查看']
-        for node in root.iter():
-            text = node.attrib.get('text', '')
-            desc = node.attrib.get('content-desc', '')
-            combined = text + desc
-
-            if '店铺' in combined:
-                # 排除包含干扰词的元素
-                has_exclude = any(word in combined for word in exclude_words)
-                if has_exclude:
-                    logger.debug(f"排除干扰元素: {combined}")
-                    continue
-
-                element = UIElement(node)
-                bounds = element.get_bounds()
-                if bounds and bounds != (0, 0, 0, 0):
-                    x1, y1, x2, y2 = bounds
-                    if y1 >= bottom_nav_y:
-                        logger.info(f"✓ 策略 3 成功: 找到'店铺'按钮, bounds={bounds}")
-                        return element
-
-        # 策略 4: 在整个底部区域查找（放宽限制）
-        logger.info("策略 4: 在底部区域查找'店铺'...")
-        bottom_area_y = height * 2 // 3
-        for node in root.iter():
-            text = node.attrib.get('text', '')
-            desc = node.attrib.get('content-desc', '')
-
-            # 精确匹配或短文本匹配
-            if text == '店铺' or desc == '店铺' or (text == '店' and len(text) <= 2):
-                element = UIElement(node)
-                bounds = element.get_bounds()
-                if bounds and bounds != (0, 0, 0, 0):
-                    x1, y1, x2, y2 = bounds
-                    if y1 >= bottom_area_y:
-                        logger.info(f"✓ 策略 4 成功: 底部区域找到'店铺'按钮, bounds={bounds}")
-                        return element
+                    logger.info(f"✓ 策略 3 成功: 通过 content-desc 精确匹配找到店铺按钮")
+                    return element
+                else:
+                    logger.info(f"content-desc='店铺' 元素边界无效，查找可点击父元素...")
+                    parent = self._find_clickable_parent(root, node)
+                    if parent:
+                        logger.info(f"✓ 策略 3 成功: 通过 content-desc 找到父元素")
+                        return parent
 
         logger.warning("未找到'店铺'按钮")
         return None
@@ -1087,27 +1027,12 @@ class UILocator:
                                 logger.info(f"✓ 策略 2 成功: 找到顶部头像, bounds={bounds}")
                                 return element
 
-        # 策略 3: 顶部区域的大字体 TextView（店铺名）
-        logger.info("策略 3: 在顶部区域查找店铺名称...")
-        if screen_size:
-            width, height = screen_size
-            top_region_height = height // 5
-
-            clickable_elements = self.find_clickable_in_region(root, 0, 0, width, top_region_height)
-            # 优先选择有文字的元素（排除视频控制元素）
-            for element in clickable_elements:
-                if _is_video_control(element.node):
-                    continue
-                if element.text and len(element.text) > 0:
-                    logger.info(f"✓ 策略 3 成功: 找到顶部可点击元素（可能是店铺名）, text={element.text}")
-                    return element
-
         logger.warning("未找到店铺名称或头像")
         return None
 
     def find_qualification_button(self, root: ET.Element) -> Optional[UIElement]:
         """
-        查找店铺主页的"资质证照"按钮
+        查找店铺主页的"资质证照"按钮（精确匹配版）
 
         Args:
             root: UI 根节点
@@ -1117,35 +1042,19 @@ class UILocator:
         """
         logger.info("开始查找'资质证照'按钮...")
 
-        # 策略 1: 通过 text 查找
-        qual_keywords = ['资质证照', '证照', '营业执照', '企业资质', '资质']
-        for keyword in qual_keywords:
-            element = self.find_element_by_text(root, keyword, exact=False)
-            if element:
-                logger.info(f"✓ 策略 1 成功: 通过 text 找到资质证照按钮: {keyword}")
-                return element
+        # 策略 1: 通过 text 精确匹配"资质证照"
+        logger.info("策略 1: 通过 text 精确匹配'资质证照'...")
+        element = self.find_element_by_text(root, "资质证照", exact=True)
+        if element:
+            logger.info(f"✓ 策略 1 成功: 通过 text 精确匹配找到资质证照按钮")
+            return element
 
-        # 策略 2: 通过 content-desc 查找
-        for keyword in qual_keywords:
-            element = self.find_element_by_desc(root, keyword, exact=False)
-            if element:
-                logger.info(f"✓ 策略 2 成功: 通过 content-desc 找到资质证照按钮: {keyword}")
-                return element
-
-        # 策略 3: 查找包含"基础信息"区域内的相关按钮
-        logger.info("策略 3: 在基础信息区域查找...")
-        for node in root.iter():
-            text = node.attrib.get('text', '')
-            if '基础信息' in text or '店铺信息' in text:
-                # 找到基础信息区域，查找附近的资质相关元素
-                parent = node
-                for child in root.iter():
-                    child_text = child.attrib.get('text', '')
-                    for keyword in qual_keywords:
-                        if keyword in child_text:
-                            element = UIElement(child)
-                            logger.info(f"✓ 策略 3 成功: 在基础信息区域找到资质证照")
-                            return element
+        # 策略 2: 通过 content-desc 精确匹配"资质证照"
+        logger.info("策略 2: 通过 content-desc 精确匹配'资质证照'...")
+        element = self.find_element_by_desc(root, "资质证照", exact=True)
+        if element:
+            logger.info(f"✓ 策略 2 成功: 通过 content-desc 精确匹配找到资质证照按钮")
+            return element
 
         logger.warning("未找到'资质证照'按钮")
         return None

@@ -163,6 +163,9 @@ class TaobaoHandler(BasePlatformHandler):
             logger.info(f"等待 {wait_time} 秒让商品页加载...")
             self._sleep(wait_time * 1000 - 1000, wait_time * 1000 + 1000)
 
+            # 截屏2：淘宝商品页
+            self.take_screenshot("淘宝商品页")
+
             logger.info("✓ 商品页已打开")
             return True
 
@@ -319,6 +322,9 @@ class TaobaoHandler(BasePlatformHandler):
         logger.info("等待店铺主页加载...")
         self._sleep(3500, 4500)
 
+        # 截屏3：店铺主页
+        self.take_screenshot("店铺主页")
+
         logger.info("✓ 已进入店铺主页")
         return True
 
@@ -365,6 +371,9 @@ class TaobaoHandler(BasePlatformHandler):
             # 停留录制证照信息
             logger.info("停留 10 秒录制资质证照信息...")
             time.sleep(10)
+
+            # 截屏4：资质证照页面
+            self.take_screenshot("资质证照页面")
 
             logger.info("✓ 店铺资质证照查看完成")
             return True

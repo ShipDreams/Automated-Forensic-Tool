@@ -36,3 +36,6 @@ test_dump.xml
 tests/captcha_poc/
 
 task.csv
+
+# 报告文件
+reports/
