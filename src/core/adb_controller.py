@@ -710,15 +710,18 @@ class ADBController:
             window_blocks = re.split(r'Window #\d+', output)
             for block in window_blocks:
                 if 'APPLICATION_OVERLAY' in block:
-                    # 尝试从 mFrame 提取坐标
-                    frame_match = re.search(r'mFrame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', block)
+                    # 尝试从 mFrame 或 frame 提取坐标（支持两种格式）
+                    frame_match = re.search(r'(?:mFrame|frame)=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', block)
+                    if not frame_match:
+                        # 备用：从 Frames: 行提取
+                        frame_match = re.search(r'Frames:.*?frame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', block)
                     if frame_match:
                         x1, y1, x2, y2 = map(int, frame_match.groups())
                         # 计算中心点
                         center_x = (x1 + x2) // 2
                         center_y = (y1 + y2) // 2
                         overlay_positions.append((center_x, center_y, x1, y1, x2, y2))
-                        logger.info(f"找到 OVERLAY 窗口: mFrame=[{x1},{y1}][{x2},{y2}], 中心=({center_x},{center_y})")
+                        logger.info(f"找到 OVERLAY 窗口: frame=[{x1},{y1}][{x2},{y2}], 中心=({center_x},{center_y})")
 
             if not overlay_positions:
                 # 备用模式: 通过 mAttrs 获取

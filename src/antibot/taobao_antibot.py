@@ -429,8 +429,13 @@ class TaobaoAntiBot:
             是否成功完成
         """
         if not self._is_in_taobao():
-            logger.warning("当前不在淘宝 App 内，无法执行浏览模拟")
-            return False
+            logger.info("当前不在淘宝 App 内，尝试打开淘宝...")
+            self.adb.run_command(f"am start -n {self.TAOBAO_PACKAGE}/.MainTabActivity")
+            self._random_sleep(3.0, 5.0)  # 等待淘宝启动
+            if not self._is_in_taobao():
+                logger.warning("无法打开淘宝，跳过浏览模拟")
+                return False
+            logger.info("✓ 已打开淘宝")
 
         # 随机决定浏览时长
         browse_duration = random.uniform(

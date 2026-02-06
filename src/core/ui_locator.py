@@ -925,11 +925,11 @@ class UILocator:
                         logger.info(f"✓ 策略 2 成功: 通过 text 找到父元素")
                         return parent
 
-        # 策略 3: 通过 content-desc 精确匹配"店铺"
-        logger.info("策略 3: 通过 content-desc 精确匹配'店铺'...")
+        # 策略 3: 通过 content-desc 精确匹配"店铺"或"店铺,按钮"
+        logger.info("策略 3: 通过 content-desc 精确匹配'店铺'或'店铺,按钮'...")
         for node in root.iter():
             desc = node.attrib.get('content-desc', '')
-            if desc == "店铺":  # 精确匹配
+            if desc == "店铺" or desc == "店铺,按钮":  # 精确匹配
                 element = UIElement(node)
                 bounds = element.get_bounds()
 

@@ -590,8 +590,14 @@ def main():
   # 单链接取证
   python main.py "https://item.taobao.com/item.htm?id=xxx"
 
-  # 批量取证
+  # 批量取证（单设备顺序执行）
   python main.py --batch tasks.json
+
+  # 批量取证（多设备并行执行）
+  python main.py --batch tasks.csv --parallel
+
+  # 指定设备并行执行
+  python main.py --batch tasks.csv --parallel --devices "device1,device2"
 
   # 禁用防风控（跳过冷却检查）
   python main.py --no-antibot "https://item.taobao.com/item.htm?id=xxx"
@@ -627,11 +633,46 @@ def main():
         action='store_true',
         help='禁用防风控功能（跳过冷却检查和人类行为模拟）'
     )
+    parser.add_argument(
+        '--parallel',
+        action='store_true',
+        help='启用多设备并行模式（需配合 --batch 使用）'
+    )
+    parser.add_argument(
+        '--devices',
+        help='指定设备 ID 列表（逗号分隔），仅在并行模式下有效',
+        default=None
+    )
+    parser.add_argument(
+        '--strategy',
+        choices=['round_robin', 'load_balance', 'random'],
+        default='round_robin',
+        help='任务分配策略（默认轮询）'
+    )
 
     args = parser.parse_args()
 
     # 批量模式
     if args.batch:
+        # 并行模式
+        if args.parallel:
+            from core.parallel_executor import run_parallel_mode
+
+            # 解析设备列表
+            device_ids = None
+            if args.devices:
+                device_ids = [d.strip() for d in args.devices.split(',')]
+
+            success = run_parallel_mode(
+                task_file=args.batch,
+                device_ids=device_ids,
+                video_duration=args.play_duration,
+                enable_antibot=not args.no_antibot,
+                strategy=args.strategy
+            )
+            sys.exit(0 if success else 1)
+
+        # 单设备顺序模式
         success = run_batch_mode(
             task_file=args.batch,
             device_id=args.device,
