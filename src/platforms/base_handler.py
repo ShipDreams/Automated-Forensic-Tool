@@ -5,7 +5,7 @@
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
+from typing import Optional, Callable
 import logging
 
 logger = logging.getLogger(__name__)
@@ -32,6 +32,26 @@ class BasePlatformHandler(ABC):
         self.adb = adb_controller
         self.locator = ui_locator
         self.antibot = antibot
+        # 截屏回调函数（由 EvidenceCollector 设置）
+        self._screenshot_callback: Optional[Callable[[], bool]] = None
+
+    def set_screenshot_callback(self, callback: Callable[[], bool]):
+        """设置截屏回调函数"""
+        self._screenshot_callback = callback
+
+    def take_screenshot(self, description: str = ""):
+        """
+        调用截屏回调
+
+        Args:
+            description: 截屏描述（用于日志）
+        """
+        if self._screenshot_callback:
+            if description:
+                logger.info(f"截屏：{description}")
+            self._screenshot_callback()
+        else:
+            logger.warning("截屏回调未设置，跳过截屏")
 
     @abstractmethod
     def get_platform_name(self) -> str:
@@ -195,7 +215,7 @@ class BasePlatformHandler(ABC):
 
     # ==================== 模板方法 ====================
 
-    def execute(self, product_url: str, video_play_duration: int = 30) -> bool:
+    def execute(self, product_url: str, video_play_duration: int = 30) -> tuple:
         """
         执行完整的平台取证流程
 
@@ -207,7 +227,7 @@ class BasePlatformHandler(ABC):
             video_play_duration: 视频录制时长（秒）
 
         Returns:
-            是否成功完成取证
+            (success: bool, error: str or None) - 是否成功，失败时返回错误原因
         """
         import time
 
@@ -217,20 +237,23 @@ class BasePlatformHandler(ABC):
         # 步骤 1: 从应用商店打开 App
         logger.info(f"步骤 1: 从应用商店打开 {platform_name}")
         if not self.open_app_from_store():
-            logger.error(f"打开应用商店搜索 {platform_name} 失败")
-            return False
+            error = f"打开应用商店搜索 {platform_name} 失败"
+            logger.error(error)
+            return False, error
 
         # 步骤 2: 启动 App
         logger.info(f"步骤 2: 启动 {platform_name} App")
         if not self.launch_app():
-            logger.error(f"启动 {platform_name} App 失败")
-            return False
+            error = f"启动 {platform_name} App 失败"
+            logger.error(error)
+            return False, error
 
         # 步骤 3: 导航到商品页
         logger.info("步骤 3: 打开商品页面")
         if not self.navigate_to_product(product_url):
-            logger.error("打开商品页失败")
-            return False
+            error = "打开商品页失败"
+            logger.error(error)
+            return False, error
 
         # 风险检查
         if not self._check_risk():
@@ -263,4 +286,4 @@ class BasePlatformHandler(ABC):
             logger.warning("店铺资质查看失败或跳过，继续流程")
 
         logger.info(f"✓ {platform_name} 平台取证流程完成")
-        return True
+        return True, None

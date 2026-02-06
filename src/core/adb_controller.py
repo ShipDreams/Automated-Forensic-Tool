@@ -670,6 +670,86 @@ class ADBController:
             logger.error(f"执行命令失败: {e}")
             return False
 
+    def get_overlay_button_position(self) -> Optional[Tuple[int, int]]:
+        """
+        获取实时保悬浮截屏按钮的坐标
+
+        通过 dumpsys window windows 解析 APPLICATION_OVERLAY 类型窗口，
+        找到位于屏幕右下角的悬浮按钮位置。
+
+        Returns:
+            (x, y) 坐标元组，未找到返回 None
+        """
+        import re
+
+        try:
+            logger.info("获取实时保悬浮按钮位置...")
+
+            # 获取屏幕尺寸用于判断右下角
+            screen_size = self.get_screen_size()
+            if not screen_size:
+                logger.error("无法获取屏幕尺寸")
+                return None
+
+            screen_width, screen_height = screen_size
+
+            # 执行 dumpsys 命令
+            result = self._run_adb_command(["shell", "dumpsys", "window", "windows"])
+            if result.returncode != 0:
+                logger.error("dumpsys window windows 命令失败")
+                return None
+
+            output = result.stdout
+
+            # 多种模式匹配 APPLICATION_OVERLAY 窗口
+            # 模式1: 通过 mFrame 获取窗口位置（更可靠）
+            # 格式: mFrame=[x1,y1][x2,y2] ... ty=APPLICATION_OVERLAY
+            overlay_positions = []
+
+            # 按窗口块分割，查找包含 APPLICATION_OVERLAY 的窗口
+            window_blocks = re.split(r'Window #\d+', output)
+            for block in window_blocks:
+                if 'APPLICATION_OVERLAY' in block:
+                    # 尝试从 mFrame 提取坐标
+                    frame_match = re.search(r'mFrame=\[(\d+),(\d+)\]\[(\d+),(\d+)\]', block)
+                    if frame_match:
+                        x1, y1, x2, y2 = map(int, frame_match.groups())
+                        # 计算中心点
+                        center_x = (x1 + x2) // 2
+                        center_y = (y1 + y2) // 2
+                        overlay_positions.append((center_x, center_y, x1, y1, x2, y2))
+                        logger.info(f"找到 OVERLAY 窗口: mFrame=[{x1},{y1}][{x2},{y2}], 中心=({center_x},{center_y})")
+
+            if not overlay_positions:
+                # 备用模式: 通过 mAttrs 获取
+                pattern = r'mAttrs=.*?\((\d+),(\d+)\).*?ty=APPLICATION_OVERLAY'
+                matches = re.findall(pattern, output, re.DOTALL)
+                if matches:
+                    for match in matches:
+                        x, y = int(match[0]), int(match[1])
+                        overlay_positions.append((x, y, x, y, x, y))
+                        logger.info(f"备用模式找到 OVERLAY: ({x},{y})")
+
+            if not overlay_positions:
+                logger.warning("未找到 APPLICATION_OVERLAY 窗口")
+                return None
+
+            # 过滤出右下角的按钮（中心点 x > 屏幕宽度一半 且 y > 屏幕高度一半）
+            for pos in overlay_positions:
+                center_x, center_y = pos[0], pos[1]
+                if center_x > screen_width // 2 and center_y > screen_height // 2:
+                    logger.info(f"✓ 找到实时保悬浮按钮位置: ({center_x}, {center_y})")
+                    return (center_x, center_y)
+
+            # 如果没有在右下角找到，返回第一个 APPLICATION_OVERLAY（可能按钮被移动了）
+            center_x, center_y = overlay_positions[0][0], overlay_positions[0][1]
+            logger.warning(f"未在右下角找到悬浮按钮，使用第一个 OVERLAY 位置: ({center_x}, {center_y})")
+            return (center_x, center_y)
+
+        except Exception as e:
+            logger.error(f"获取悬浮按钮位置失败: {e}")
+            return None
+
     def _run_adb_command(self, args: List[str]) -> subprocess.CompletedProcess:
         """执行 ADB 命令"""
         cmd = ["adb"]

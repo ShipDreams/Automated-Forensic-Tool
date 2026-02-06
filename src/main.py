@@ -80,6 +80,45 @@ class EvidenceCollector:
         else:
             self.router = None
 
+        # 实时保悬浮截屏按钮位置缓存
+        self._screenshot_button_pos = None
+
+    # ==================== 截屏功能 ====================
+
+    def click_screenshot_button(self) -> bool:
+        """
+        点击实时保悬浮截屏按钮
+
+        首次调用时获取并缓存按钮位置，后续直接使用缓存坐标。
+
+        Returns:
+            是否成功点击
+        """
+        try:
+            # 首次调用时获取按钮位置
+            if self._screenshot_button_pos is None:
+                pos = self.adb.get_overlay_button_position()
+                if not pos:
+                    logger.warning("未找到实时保悬浮按钮，跳过截屏")
+                    return False
+                self._screenshot_button_pos = pos
+                logger.info(f"已缓存悬浮按钮位置: {pos}")
+
+            # 点击悬浮按钮
+            x, y = self._screenshot_button_pos
+            logger.info(f"点击实时保截屏按钮: ({x}, {y})")
+            if self.adb.tap(x, y):
+                logger.info("✓ 截屏按钮已点击")
+                time.sleep(1)  # 等待截屏完成
+                return True
+            else:
+                logger.warning("点击截屏按钮失败")
+                return False
+
+        except Exception as e:
+            logger.error(f"点击截屏按钮异常: {e}")
+            return False
+
     # ==================== 公共流程 ====================
 
     def stage_1_check_environment(self) -> bool:
@@ -151,6 +190,10 @@ class EvidenceCollector:
             logger.info("等待5秒让页面加载...")
             time.sleep(5)
 
+            # 截屏1：北京时间页面
+            logger.info("截屏1：北京时间页面")
+            self.click_screenshot_button()
+
             logger.info("停留5秒展示北京时间...")
             time.sleep(5)
 
@@ -186,7 +229,7 @@ class EvidenceCollector:
         self,
         product_url: str,
         video_play_duration: int = 30
-    ) -> bool:
+    ) -> tuple:
         """
         执行完整取证流程
 
@@ -195,7 +238,7 @@ class EvidenceCollector:
             video_play_duration: 视频录制时长（秒）
 
         Returns:
-            是否成功完成取证
+            (success: bool, error: str or None) - 是否成功，失败时返回错误原因
         """
         logger.info("*" * 60)
         logger.info("开始执行 Android 自动取证流程")
@@ -207,20 +250,23 @@ class EvidenceCollector:
         try:
             # 阶段 1: 环境检查
             if not self.stage_1_check_environment():
-                logger.error("环境检查失败，终止流程")
-                return False
+                error = "环境检查失败"
+                logger.error(f"{error}，终止流程")
+                return False, error
 
             # 阶段 2: 启动实时保录屏
             if not self.stage_2_start_recording():
-                logger.error("启动实时保录屏失败，终止流程")
-                return False
+                error = "启动实时保录屏失败"
+                logger.error(f"{error}，终止流程")
+                return False, error
             recording_started = True
 
             # 阶段 3: 展示北京时间
             if not self.stage_3_show_beijing_time():
-                logger.error("展示北京时间失败，终止流程")
+                error = "展示北京时间失败"
+                logger.error(f"{error}，终止流程")
                 self._cleanup_on_failure(recording_started)
-                return False
+                return False, error
 
             # 阶段 4-8: 平台特定流程
             if self.router:
@@ -229,50 +275,60 @@ class EvidenceCollector:
                     handler = self.router.get_handler(product_url)
                     logger.info(f"使用 {handler.get_platform_display_name()} 平台处理器")
 
-                    if not handler.execute(product_url, video_play_duration):
-                        logger.error("平台取证流程失败")
+                    # 设置截屏回调
+                    handler.set_screenshot_callback(self.click_screenshot_button)
+
+                    success, platform_error = handler.execute(product_url, video_play_duration)
+                    if not success:
+                        error = platform_error or "平台取证流程失败"
+                        logger.error(error)
                         if self.antibot:
                             self.antibot.record_task_done(success=False)
                         self._cleanup_on_failure(recording_started)
-                        return False
+                        return False, error
 
                 except NotImplementedError as e:
-                    logger.error(f"平台未实现: {e}")
+                    error = f"平台未实现: {e}"
+                    logger.error(error)
                     self._cleanup_on_failure(recording_started)
-                    return False
+                    return False, error
 
                 except ValueError as e:
-                    logger.error(f"无法识别平台: {e}")
+                    error = f"无法识别平台: {e}"
+                    logger.error(error)
                     self._cleanup_on_failure(recording_started)
-                    return False
+                    return False, error
             else:
                 # 兼容模式：直接使用旧的淘宝流程
                 logger.warning("平台路由器不可用，使用兼容模式")
-                if not self._run_legacy_taobao_process(product_url, video_play_duration):
+                success, legacy_error = self._run_legacy_taobao_process(product_url, video_play_duration)
+                if not success:
                     self._cleanup_on_failure(recording_started)
-                    return False
+                    return False, legacy_error
 
             # 阶段 9: 停止并导出（成功时保存）
             if not self.stage_9_export_evidence():
-                logger.error("导出取证文件失败")
-                return False
+                error = "导出取证文件失败"
+                logger.error(error)
+                return False, error
 
             logger.info("*" * 60)
             logger.info("✓ 取证流程全部完成")
             logger.info("*" * 60)
-            return True
+            return True, None
 
         except KeyboardInterrupt:
             logger.warning("用户中断，尝试保存录屏...")
             self.recorder.stop_recording()
-            return False
+            return False, "用户中断"
 
         except Exception as e:
-            logger.error(f"取证流程异常: {e}", exc_info=True)
+            error = f"取证流程异常: {e}"
+            logger.error(error, exc_info=True)
             if self.antibot:
                 self.antibot.record_task_done(success=False)
             self._cleanup_on_failure(recording_started)
-            return False
+            return False, error
 
     def _cleanup_on_failure(self, recording_started: bool):
         """
@@ -292,25 +348,30 @@ class EvidenceCollector:
         self,
         product_url: str,
         video_play_duration: int
-    ) -> bool:
+    ) -> tuple:
         """
         兼容模式：旧的淘宝流程（当 PlatformRouter 不可用时）
 
         这是从原 main.py 保留的逻辑，用于向后兼容。
         新代码应该使用 PlatformRouter。
+
+        Returns:
+            (success: bool, error: str or None)
         """
         logger.warning("使用旧版淘宝流程（兼容模式）")
 
         # 阶段 4: 打开应用商店
         if not self.adb.open_app_store_and_search_taobao():
-            logger.error("打开应用商店失败")
-            return False
+            error = "打开应用商店失败"
+            logger.error(error)
+            return False, error
         time.sleep(6)
 
         # 阶段 5: 从应用商店打开淘宝
         if not self.locator.find_and_click_app_store_open_button(max_attempts=3):
-            logger.error("未能点击'打开'按钮")
-            return False
+            error = "未能点击'打开'按钮"
+            logger.error(error)
+            return False, error
         time.sleep(10)
 
         # 阶段 6: 在淘宝中打开商品
@@ -320,22 +381,26 @@ class EvidenceCollector:
 
         root = self.locator.dump_and_parse()
         if not root:
-            logger.error("无法获取 UI 层级")
-            return False
+            error = "无法获取 UI 层级"
+            logger.error(error)
+            return False, error
 
         search_box = self.locator.find_taobao_search_box(root)
         if not search_box:
-            logger.error("未找到淘宝搜索框")
-            return False
+            error = "未找到淘宝搜索框"
+            logger.error(error)
+            return False, error
 
         if not self.locator.click_element(search_box):
-            logger.error("点击搜索框失败")
-            return False
+            error = "点击搜索框失败"
+            logger.error(error)
+            return False, error
         time.sleep(1)
 
         if not self.adb.input_text(product_url):
-            logger.error("输入商品链接失败")
-            return False
+            error = "输入商品链接失败"
+            logger.error(error)
+            return False, error
         time.sleep(1)
 
         self.adb.press_enter()
@@ -356,7 +421,7 @@ class EvidenceCollector:
                 self.locator.click_element(shop_btn)
                 time.sleep(3)
 
-        return True
+        return True, None
 
 
 def _load_taobao_antibot_config() -> dict:
@@ -449,7 +514,7 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
             time.sleep(remaining.total_seconds())
             logger.info("✓ 冷却期已结束")
 
-        success = collector.run_full_process(
+        success, error = collector.run_full_process(
             product_url=task.product_url,
             video_play_duration=task.video_duration or video_duration
         )
@@ -489,20 +554,30 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
 
         return TaskResult(
             success=success,
-            message="取证完成" if success else "取证失败"
+            message="取证完成" if success else "取证失败",
+            error=error
         )
 
     task_manager.set_executor(execute_task)
 
     # 执行所有任务
-    stats = task_manager.run_all(delay_between_tasks=10)
+    try:
+        stats = task_manager.run_all(delay_between_tasks=10)
+    except KeyboardInterrupt:
+        logger.warning("用户中断批量任务")
+        # 设置结束时间以便生成报告
+        from datetime import datetime
+        task_manager.stats['end_time'] = datetime.now().isoformat()
+    finally:
+        # 无论成功、失败还是中断，都生成汇总报告
+        task_manager.generate_report()
 
     # 任务全部完成后关闭淘宝
     if taobao_antibot:
         logger.info("所有任务完成，关闭淘宝进程")
         taobao_antibot.close_taobao()
 
-    return stats['failed'] == 0
+    return task_manager.stats.get('failed', 0) == 0
 
 
 def main():
@@ -571,10 +646,13 @@ def main():
         enable_antibot=not args.no_antibot
     )
 
-    success = collector.run_full_process(
+    success, error = collector.run_full_process(
         product_url=args.product_url,
         video_play_duration=args.play_duration
     )
+
+    if not success and error:
+        logger.error(f"取证失败: {error}")
 
     sys.exit(0 if success else 1)
 
