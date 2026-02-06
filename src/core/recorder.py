@@ -339,17 +339,34 @@ class ScreenRecorder:
             time.sleep(2)
             root = self.locator.dump_and_parse()
             if not root:
-                logger.error(t('log.cannot_get_shishibao_ui'))
-                return False
+                logger.warning(t('log.cannot_get_shishibao_ui'))
+                # Fallback: press back key to exit without saving
+                logger.info("Fallback: pressing back key to exit without saving")
+                self.adb.press_back()
+                time.sleep(1)
+                self.adb.press_back()
+                self.is_recording = False
+                return True
 
             cancel_btn = self.locator.find_shishibao_cancel_button(root)
             if not cancel_btn:
-                logger.error(t('log.cancel_not_found'))
-                return False
+                logger.warning(t('log.cancel_not_found'))
+                # Fallback: press back key to exit without saving
+                logger.info("Fallback: cancel button not found, pressing back key to exit")
+                self.adb.press_back()
+                time.sleep(1)
+                self.adb.press_back()
+                self.is_recording = False
+                return True
 
             if not self.locator.click_element(cancel_btn):
-                logger.error(t('log.click_cancel_failed'))
-                return False
+                logger.warning(t('log.click_cancel_failed'))
+                # Fallback: press back key to exit without saving
+                logger.info("Fallback: click cancel failed, pressing back key to exit")
+                self.adb.press_back()
+                time.sleep(1)
+                self.is_recording = False
+                return True
 
             # Step 4: Wait for interface to restore
             logger.info(t('log.step_4_wait_restore'))

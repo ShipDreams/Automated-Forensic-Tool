@@ -7,6 +7,8 @@ Responsible for parsing UI hierarchy and locating target elements.
 import xml.etree.ElementTree as ET
 import re
 import logging
+import shutil
+from datetime import datetime
 from typing import Optional, List, Tuple, Dict, Callable
 from pathlib import Path
 
@@ -97,6 +99,10 @@ class UILocator:
         self.temp_dir = Path("./temp")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.current_xml_path = None
+        # Debug: dump file counter
+        self.dump_counter = 0
+        self.debug_dir = Path("./temp/debug_dumps")
+        self.debug_dir.mkdir(parents=True, exist_ok=True)
 
     def dump_and_parse(self) -> Optional[ET.Element]:
         """
@@ -135,6 +141,15 @@ class UILocator:
             tree = ET.parse(str(local_path))
             self.current_xml_path = str(local_path)
             logger.info(t('log.ui_parse_success', path=local_path))
+
+            # Debug: save timestamped copy for troubleshooting
+            self.dump_counter += 1
+            timestamp = datetime.now().strftime("%H%M%S")
+            debug_filename = f"dump_{self.dump_counter:03d}_{timestamp}_{file_size}bytes.xml"
+            debug_path = self.debug_dir / debug_filename
+            shutil.copy(str(local_path), str(debug_path))
+            logger.info(f"[DEBUG] saved dump copy: {debug_path}")
+
             return tree.getroot()
 
         except ET.ParseError as e:
@@ -791,6 +806,33 @@ class UILocator:
         """
         logger.info(t('log.search_volume_button'))
 
+        # Debug: output all video-related elements
+        logger.info("[DEBUG] ========== Scanning XML for video-related elements ==========")
+        video_related_keywords = ['mute', 'volume', 'play', 'pause', 'video', 'seek', 'sound']
+        found_elements = []
+        for node in root.iter():
+            res_id = node.attrib.get('resource-id', '')
+            content_desc = node.attrib.get('content-desc', '')
+            bounds = node.attrib.get('bounds', '')
+
+            # Check if resource-id or content-desc contains video-related keywords
+            res_id_lower = res_id.lower()
+            desc_lower = content_desc.lower()
+            for kw in video_related_keywords:
+                if kw in res_id_lower or kw in desc_lower:
+                    found_elements.append({
+                        'resource-id': res_id,
+                        'content-desc': content_desc,
+                        'bounds': bounds,
+                        'class': node.attrib.get('class', '')
+                    })
+                    break
+
+        logger.info(f"[DEBUG] Found {len(found_elements)} video-related elements:")
+        for elem in found_elements:
+            logger.info(f"[DEBUG]   - id={elem['resource-id']}, desc={elem['content-desc']}, bounds={elem['bounds']}")
+        logger.info("[DEBUG] ================================================")
+
         # Strategy 0 (priority): Find by exact Taobao resource-id
         taobao_mute_ids = [
             "com.taobao.taobao:id/iv_mute_btn",
@@ -951,6 +993,8 @@ class UILocator:
     def find_shop_name_or_avatar(self, root: ET.Element) -> Optional[UIElement]:
         """
         Find shop page shop name or avatar.
+        Priority: shop name text > logoCover > resource-id > avatar ImageView
+        (Clicking shop name is safer than avatar which may navigate elsewhere)
 
         Args:
             root: UI root node
@@ -976,7 +1020,37 @@ class UILocator:
                     return True
             return False
 
-        # Strategy 0 (priority): Find shop avatar by content-desc="logoCover"
+        # Strategy 0 (highest priority): Find shop name text in top area
+        # Shop names usually contain keywords like "旗舰店", "专卖店", "官方店" etc.
+        logger.info("[Strategy 0] Finding shop name text (preferred over avatar)")
+        shop_name_keywords = ['旗舰店', '专卖店', '官方店', '专营店', '自营店', '品牌店']
+        screen_size = self.adb.get_screen_size()
+        if screen_size:
+            width, height = screen_size
+            top_region_height = height // 3  # Top 1/3 area
+
+            for node in root.iter():
+                text = node.attrib.get('text', '')
+                if text and not _is_video_control(node):
+                    # Check if contains shop name keywords
+                    for keyword in shop_name_keywords:
+                        if keyword in text:
+                            element = UIElement(node)
+                            bounds = element.get_bounds()
+                            if bounds and bounds != (0, 0, 0, 0):
+                                x1, y1, x2, y2 = bounds
+                                if y1 < top_region_height:
+                                    # Find clickable parent if element itself not clickable
+                                    if element.clickable:
+                                        logger.info(f"[Strategy 0] Found shop name text: {text}, bounds={bounds}")
+                                        return element
+                                    parent = self._find_clickable_parent(root, node)
+                                    if parent:
+                                        logger.info(f"[Strategy 0] Found clickable parent for shop name: {text}, bounds={parent.get_bounds()}")
+                                        return parent
+                            break
+
+        # Strategy 1: Find shop avatar by content-desc="logoCover"
         logger.info(t('log.strategy_0_logo_cover'))
         for node in root.iter():
             desc = node.attrib.get('content-desc', '')
@@ -992,7 +1066,7 @@ class UILocator:
                     logger.info(t('log.strategy_0_logo_success', bounds=bounds))
                     return element
 
-        # Strategy 1: Find by resource-id
+        # Strategy 2: Find by resource-id
         logger.info(t('log.strategy_1_shop_name'))
         shop_ids = ['shop_name', 'store_name', 'shop_title', 'seller_name', 'avatar', 'shop_avatar']
         for res_id in shop_ids:
@@ -1003,9 +1077,8 @@ class UILocator:
                     logger.info(t('log.strategy_1_shop_name_success', id=rid))
                     return element
 
-        # Strategy 2: ImageView in top area (avatar usually at top)
+        # Strategy 3: ImageView in top area (avatar usually at top) - last resort
         logger.info(t('log.strategy_2_avatar'))
-        screen_size = self.adb.get_screen_size()
         if screen_size:
             width, height = screen_size
             top_region_height = height // 4

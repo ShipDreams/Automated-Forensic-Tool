@@ -417,7 +417,7 @@ class ADBController:
         Returns:
             Whether successfully dumped
         """
-        max_attempts = 3
+        max_attempts = 5  # Increased from 3 to handle recording instability
 
         # Detect if Xiaomi device
         is_xiaomi = self.get_device_brand() in ['xiaomi', 'redmi']
@@ -428,6 +428,10 @@ class ADBController:
             try:
                 logger.info(t('log.dump_ui_hierarchy_attempt', attempt=attempt, max_attempts=max_attempts))
 
+                # Delete old dump file before each attempt to prevent reading stale cache
+                # when uiautomator dump silently fails (returns success but doesn't update file)
+                self.delete_file(output_path)
+
                 # Build command, prefer --compressed (improves success rate during recording)
                 if use_compressed:
                     result = self._run_adb_command(["shell", "uiautomator", "dump", "--compressed", output_path])
@@ -435,9 +439,19 @@ class ADBController:
                     result = self._run_adb_command(["shell", "uiautomator", "dump", output_path])
 
                 if result.returncode == 0:
-                    logger.info(t('log.ui_hierarchy_dump_success'))
-                    time.sleep(1)
-                    return True
+                    # Verify file was actually created (uiautomator may return success but not create file)
+                    time.sleep(0.5)  # Reduced from 1s to improve performance
+                    if self.file_exists(output_path):
+                        logger.info(t('log.ui_hierarchy_dump_success'))
+                        return True
+                    else:
+                        # Silent failure: command succeeded but file not created
+                        logger.warning(f"dump command returned success but file not created, attempt {attempt}/{max_attempts}")
+                        if attempt < max_attempts:
+                            # Progressive wait: 2s, 3s, 4s, 5s (let screen recording stabilize)
+                            wait_time = 1 + attempt
+                            time.sleep(wait_time)
+                        continue
 
                 # Check for known MIUI theme compatibility bug on first Xiaomi failure
                 if attempt == 1 and is_xiaomi and result.stderr and "theme_compatibility" in result.stderr:

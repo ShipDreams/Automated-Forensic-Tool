@@ -281,11 +281,13 @@ class BasePlatformHandler(ABC):
         logger.info(t('log.step_continue_recording', seconds=video_play_duration))
         time.sleep(video_play_duration)
 
-        # Step 7: View shop qualification
+        # Step 7: View shop qualification (required for complete forensic)
         logger.info(t('log.step_view_qualification'))
         qualification_viewed = self.view_qualification()
         if not qualification_viewed:
-            logger.warning(t('log.qualification_view_failed_continue'))
+            error = t('log.qualification_view_failed')
+            logger.error(error)
+            return False, error  # Fail forensic if qualification not viewed
 
         logger.info(t('log.platform_forensic_complete', platform=platform_name))
         return True, None
