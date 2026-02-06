@@ -1,188 +1,190 @@
 #!/usr/bin/env python3
 """
-平台处理器基类
-定义所有电商平台取证的统一接口
+Platform Handler Base Class
+Defines unified interface for e-commerce platform forensics.
 """
 
 from abc import ABC, abstractmethod
 from typing import Optional, Callable
 import logging
 
+from locales import t
+
 logger = logging.getLogger(__name__)
 
 
 class BasePlatformHandler(ABC):
     """
-    平台处理器抽象基类
+    Platform Handler Abstract Base Class
 
-    所有平台（淘宝、京东、抖音等）都必须继承此类并实现所有抽象方法。
-    公共流程（环境检查、录屏、时间锚点）由 EvidenceCollector 处理，
-    平台特定流程（打开App、商品页、视频播放、店铺资质）由各 Handler 实现。
+    All platforms (Taobao, JD, Douyin, etc.) must inherit this class and implement all abstract methods.
+    Common flows (environment check, recording, time anchor) are handled by EvidenceCollector.
+    Platform-specific flows (open App, product page, video playback, shop qualification) are implemented by each Handler.
     """
 
     def __init__(self, adb_controller, ui_locator, antibot=None):
         """
-        初始化平台处理器
+        Initialize platform handler.
 
         Args:
-            adb_controller: ADBController 实例
-            ui_locator: UILocator 实例
-            antibot: AntiBot 实例（可选，用于人类行为模拟）
+            adb_controller: ADBController instance
+            ui_locator: UILocator instance
+            antibot: AntiBot instance (optional, for human behavior simulation)
         """
         self.adb = adb_controller
         self.locator = ui_locator
         self.antibot = antibot
-        # 截屏回调函数（由 EvidenceCollector 设置）
+        # Screenshot callback function (set by EvidenceCollector)
         self._screenshot_callback: Optional[Callable[[], bool]] = None
 
     def set_screenshot_callback(self, callback: Callable[[], bool]):
-        """设置截屏回调函数"""
+        """Set screenshot callback function."""
         self._screenshot_callback = callback
 
     def take_screenshot(self, description: str = ""):
         """
-        调用截屏回调
+        Call screenshot callback.
 
         Args:
-            description: 截屏描述（用于日志）
+            description: Screenshot description (for logging)
         """
         if self._screenshot_callback:
             if description:
-                logger.info(f"截屏：{description}")
+                logger.info(t('log.taking_screenshot', description=description))
             self._screenshot_callback()
         else:
-            logger.warning("截屏回调未设置，跳过截屏")
+            logger.warning(t('log.screenshot_callback_not_set'))
 
     @abstractmethod
     def get_platform_name(self) -> str:
         """
-        返回平台名称
+        Return platform name.
 
         Returns:
-            平台名称，如 "taobao", "jd", "douyin"
+            Platform name, e.g., "taobao", "jd", "douyin"
         """
         pass
 
     @abstractmethod
     def get_platform_display_name(self) -> str:
         """
-        返回平台显示名称（中文）
+        Return platform display name.
 
         Returns:
-            显示名称，如 "淘宝", "京东", "抖音"
+            Display name, e.g., "Taobao", "JD", "Douyin"
         """
         pass
 
     @abstractmethod
     def get_app_package(self) -> str:
         """
-        返回 App 包名
+        Return app package name.
 
         Returns:
-            包名，如 "com.taobao.taobao"
+            Package name, e.g., "com.taobao.taobao"
         """
         pass
 
     @abstractmethod
     def get_app_store_search_keyword(self) -> str:
         """
-        返回在应用商店搜索时使用的关键词
+        Return keyword for app store search.
 
         Returns:
-            搜索关键词，如 "淘宝", "京东"
+            Search keyword, e.g., "Taobao", "JD"
         """
         pass
 
     @abstractmethod
     def open_app_from_store(self, wait_time: int = 6) -> bool:
         """
-        从应用商店搜索并打开 App
+        Search and open app from app store.
 
         Args:
-            wait_time: 等待搜索结果加载的时间（秒）
+            wait_time: Time to wait for search results (seconds)
 
         Returns:
-            是否成功打开
+            Whether successfully opened
         """
         pass
 
     @abstractmethod
     def launch_app(self, wait_time: int = 10) -> bool:
         """
-        启动 App（从应用商店点击"打开"或直接启动）
+        Launch app (click "Open" from app store or direct launch).
 
         Args:
-            wait_time: 等待 App 启动的时间（秒）
+            wait_time: Time to wait for app to launch (seconds)
 
         Returns:
-            是否成功启动
+            Whether successfully launched
         """
         pass
 
     @abstractmethod
     def navigate_to_product(self, product_url: str, wait_time: int = 8) -> bool:
         """
-        导航到商品页面
+        Navigate to product page.
 
         Args:
-            product_url: 商品链接
-            wait_time: 等待页面加载的时间（秒）
+            product_url: Product link
+            wait_time: Time to wait for page load (seconds)
 
         Returns:
-            是否成功打开商品页
+            Whether successfully opened product page
         """
         pass
 
     @abstractmethod
     def play_video(self, max_attempts: int = 3) -> bool:
         """
-        播放商品视频
+        Play product video.
 
         Args:
-            max_attempts: 最大尝试次数
+            max_attempts: Maximum number of attempts
 
         Returns:
-            是否成功播放（部分商品可能无视频，返回 False 不一定是错误）
+            Whether successfully played (some products may not have video, False is not necessarily an error)
         """
         pass
 
     @abstractmethod
     def unmute_video(self, max_attempts: int = 2) -> bool:
         """
-        打开视频声音
+        Unmute video.
 
         Args:
-            max_attempts: 最大尝试次数
+            max_attempts: Maximum number of attempts
 
         Returns:
-            是否成功打开声音
+            Whether successfully unmuted
         """
         pass
 
     @abstractmethod
     def view_shop_info(self) -> bool:
         """
-        查看店铺信息
+        View shop information.
 
         Returns:
-            是否成功查看
+            Whether successfully viewed
         """
         pass
 
     @abstractmethod
     def view_qualification(self) -> bool:
         """
-        查看店铺资质证照
+        View shop qualification certificates.
 
         Returns:
-            是否成功查看
+            Whether successfully viewed
         """
         pass
 
-    # ==================== AntiBot 辅助方法 ====================
+    # ==================== AntiBot Helper Methods ====================
 
     def _sleep(self, min_ms: int = None, max_ms: int = None):
-        """人类化随机延迟"""
+        """Human-like random delay."""
         if self.antibot:
             self.antibot.sleep(min_ms, max_ms)
         else:
@@ -192,7 +194,7 @@ class BasePlatformHandler(ABC):
             time.sleep(delay)
 
     def _sleep_after_click(self):
-        """点击后延迟"""
+        """Delay after click."""
         if self.antibot:
             self.antibot.sleep_after_click()
         else:
@@ -202,10 +204,10 @@ class BasePlatformHandler(ABC):
 
     def _check_risk(self) -> bool:
         """
-        检查当前页面风险
+        Check current page risk.
 
         Returns:
-            是否安全（True = 安全，False = 有风险）
+            Whether safe (True = safe, False = risky)
         """
         if not self.antibot:
             return True
@@ -213,77 +215,77 @@ class BasePlatformHandler(ABC):
         root = self.locator.dump_and_parse()
         return self.antibot.is_safe(root)
 
-    # ==================== 模板方法 ====================
+    # ==================== Template Method ====================
 
     def execute(self, product_url: str, video_play_duration: int = 30) -> tuple:
         """
-        执行完整的平台取证流程
+        Execute complete platform forensic workflow.
 
-        这是一个模板方法，定义了平台取证的标准流程。
-        子类可以重写此方法来自定义流程，但通常只需实现各个抽象方法。
+        This is a template method that defines the standard forensic workflow.
+        Subclasses can override this method to customize the flow, but usually only need to implement the abstract methods.
 
         Args:
-            product_url: 商品链接
-            video_play_duration: 视频录制时长（秒）
+            product_url: Product link
+            video_play_duration: Video recording duration (seconds)
 
         Returns:
-            (success: bool, error: str or None) - 是否成功，失败时返回错误原因
+            (success: bool, error: str or None) - Whether successful, error reason on failure
         """
         import time
 
         platform_name = self.get_platform_display_name()
-        logger.info(f"开始执行 {platform_name} 平台取证流程")
+        logger.info(t('log.start_platform_forensic', platform=platform_name))
 
-        # 步骤 1: 从应用商店打开 App
-        logger.info(f"步骤 1: 从应用商店打开 {platform_name}")
+        # Step 1: Open app from app store
+        logger.info(t('log.step_open_app_store', platform=platform_name))
         if not self.open_app_from_store():
-            error = f"打开应用商店搜索 {platform_name} 失败"
+            error = t('log.open_app_store_failed', platform=platform_name)
             logger.error(error)
             return False, error
 
-        # 步骤 2: 启动 App
-        logger.info(f"步骤 2: 启动 {platform_name} App")
+        # Step 2: Launch app
+        logger.info(t('log.step_launch_app', platform=platform_name))
         if not self.launch_app():
-            error = f"启动 {platform_name} App 失败"
+            error = t('log.launch_app_failed', platform=platform_name)
             logger.error(error)
             return False, error
 
-        # 步骤 3: 导航到商品页
-        logger.info("步骤 3: 打开商品页面")
+        # Step 3: Navigate to product page
+        logger.info(t('log.step_open_product'))
         if not self.navigate_to_product(product_url):
-            error = "打开商品页失败"
+            error = t('log.open_product_failed')
             logger.error(error)
             return False, error
 
-        # 风险检查
+        # Risk check
         if not self._check_risk():
-            logger.warning("检测到风险状态，流程可能受阻")
+            logger.warning(t('log.risk_detected'))
 
-        # 步骤 4+5: 视频播放（打开音量 + 从头播放）
-        # 优先使用 replay_video_from_start（淘宝），否则使用旧的 unmute + play
-        logger.info("步骤 4-5: 视频播放（打开音量并从头播放）")
+        # Step 4+5: Video playback (unmute + replay from start)
+        # Prefer replay_video_from_start (Taobao), otherwise use old unmute + play
+        logger.info(t('log.step_video_playback'))
         if hasattr(self, 'replay_video_from_start'):
             self.replay_video_from_start()
         else:
-            # 旧流程：先打开音量，再点击播放
-            logger.info("步骤 4: 打开视频声音")
+            # Old flow: unmute first, then play
+            logger.info(t('log.step_unmute_video'))
             self.unmute_video()
             self._sleep_after_click()
 
-            logger.info("步骤 5: 播放商品视频")
+            logger.info(t('log.step_play_video'))
             video_played = self.play_video()
             if not video_played:
-                logger.warning("未能自动播放视频，但继续录制")
+                logger.warning(t('log.video_play_failed_continue'))
 
-        # 步骤 6: 持续录制
-        logger.info(f"步骤 6: 持续录制 {video_play_duration} 秒")
+        # Step 6: Continue recording
+        logger.info(t('log.step_continue_recording', seconds=video_play_duration))
         time.sleep(video_play_duration)
 
-        # 步骤 7: 查看店铺资质
-        logger.info("步骤 7: 查看店铺资质")
+        # Step 7: View shop qualification
+        logger.info(t('log.step_view_qualification'))
         qualification_viewed = self.view_qualification()
         if not qualification_viewed:
-            logger.warning("店铺资质查看失败或跳过，继续流程")
+            logger.warning(t('log.qualification_view_failed_continue'))
 
-        logger.info(f"✓ {platform_name} 平台取证流程完成")
+        logger.info(t('log.platform_forensic_complete', platform=platform_name))
         return True, None

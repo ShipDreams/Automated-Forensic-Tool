@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-人类行为模拟器
-通过随机延迟、随机滚动等方式模拟真人操作
+Human Behavior Simulator
+Simulates human operations through random delays, random scrolling, etc.
 """
 
 import random
@@ -9,32 +9,34 @@ import time
 import logging
 from typing import Optional, Tuple
 
+from locales import t
+
 logger = logging.getLogger(__name__)
 
 
 class HumanSimulator:
     """
-    人类行为模拟器
+    Human Behavior Simulator
 
-    核心功能：
-    - 随机延迟（避免固定间隔）
-    - 随机滚动（模拟浏览行为）
-    - 随机点击偏移（避免精确坐标点击）
-    - 随机浏览动作（偶尔做一些无关操作）
+    Core features:
+    - Random delay (avoid fixed intervals)
+    - Random scrolling (simulate browsing behavior)
+    - Random click offset (avoid precise coordinate clicks)
+    - Random browsing actions (occasionally perform unrelated operations)
     """
 
     def __init__(self, config: dict = None):
         """
-        初始化模拟器
+        Initialize simulator.
 
         Args:
-            config: 配置字典，来自 config/antibot.json 的 human_behavior 部分
+            config: Config dictionary, from config/antibot.json human_behavior section
         """
         self.config = config or {}
         self._load_config()
 
     def _load_config(self):
-        """加载配置参数"""
+        """Load config parameters."""
         sleep_config = self.config.get('sleep', {})
         self.sleep_min_ms = sleep_config.get('min_ms', 500)
         self.sleep_max_ms = sleep_config.get('max_ms', 2000)
@@ -54,14 +56,14 @@ class HumanSimulator:
 
     def random_sleep(self, min_ms: int = None, max_ms: int = None) -> float:
         """
-        随机延迟
+        Random delay.
 
         Args:
-            min_ms: 最小延迟毫秒数
-            max_ms: 最大延迟毫秒数
+            min_ms: Minimum delay milliseconds
+            max_ms: Maximum delay milliseconds
 
         Returns:
-            实际延迟的秒数
+            Actual delay in seconds
         """
         min_ms = min_ms or self.sleep_min_ms
         max_ms = max_ms or self.sleep_max_ms
@@ -69,24 +71,24 @@ class HumanSimulator:
         delay_ms = random.randint(min_ms, max_ms)
         delay_sec = delay_ms / 1000.0
 
-        logger.debug(f"随机延迟: {delay_ms}ms")
+        logger.debug(t('log.random_delay', ms=delay_ms))
         time.sleep(delay_sec)
 
         return delay_sec
 
     def sleep_after_click(self) -> float:
-        """点击后的随机延迟"""
+        """Random delay after click."""
         return self.random_sleep(self.after_click_min_ms, self.after_click_max_ms)
 
     def get_random_offset(self, max_offset: int = 10) -> Tuple[int, int]:
         """
-        获取随机偏移量（用于点击坐标微调）
+        Get random offset (for click coordinate adjustment).
 
         Args:
-            max_offset: 最大偏移像素
+            max_offset: Maximum offset pixels
 
         Returns:
-            (x_offset, y_offset) 元组
+            (x_offset, y_offset) tuple
         """
         x_offset = random.randint(-max_offset, max_offset)
         y_offset = random.randint(-max_offset, max_offset)
@@ -99,15 +101,15 @@ class HumanSimulator:
         max_offset: int = 10
     ) -> Tuple[int, int]:
         """
-        给坐标点添加随机偏移
+        Add random offset to coordinate point.
 
         Args:
-            x: 原始 x 坐标
-            y: 原始 y 坐标
-            max_offset: 最大偏移像素
+            x: Original x coordinate
+            y: Original y coordinate
+            max_offset: Maximum offset pixels
 
         Returns:
-            (new_x, new_y) 元组
+            (new_x, new_y) tuple
         """
         offset_x, offset_y = self.get_random_offset(max_offset)
         return x + offset_x, y + offset_y
@@ -119,22 +121,22 @@ class HumanSimulator:
         direction: str = 'up'
     ) -> Tuple[int, int, int, int, int]:
         """
-        获取随机滚动参数
+        Get random scroll parameters.
 
         Args:
-            screen_width: 屏幕宽度
-            screen_height: 屏幕高度
-            direction: 滚动方向 ('up', 'down', 'left', 'right')
+            screen_width: Screen width
+            screen_height: Screen height
+            direction: Scroll direction ('up', 'down', 'left', 'right')
 
         Returns:
-            (start_x, start_y, end_x, end_y, duration_ms) 元组
+            (start_x, start_y, end_x, end_y, duration_ms) tuple
         """
-        # 在屏幕中间区域随机选择起点
+        # Randomly select start point in center screen area
         center_x = screen_width // 2
         x_variance = screen_width // 6
         start_x = center_x + random.randint(-x_variance, x_variance)
 
-        # 根据方向计算滚动
+        # Calculate scroll based on direction
         distance = random.randint(self.scroll_min_distance, self.scroll_max_distance)
         duration = random.randint(self.scroll_min_duration, self.scroll_max_duration)
 
@@ -157,9 +159,9 @@ class HumanSimulator:
             end_x = start_x + distance
             end_y = start_y + random.randint(-20, 20)
         else:
-            raise ValueError(f"未知的滚动方向: {direction}")
+            raise ValueError(t('log.unknown_scroll_direction', direction=direction))
 
-        # 确保坐标在屏幕范围内
+        # Ensure coordinates within screen bounds
         end_x = max(0, min(end_x, screen_width - 1))
         end_y = max(0, min(end_y, screen_height - 1))
 
@@ -167,10 +169,10 @@ class HumanSimulator:
 
     def should_do_random_action(self) -> bool:
         """
-        判断是否应该执行随机浏览动作
+        Determine if should execute random browsing action.
 
         Returns:
-            是否应该执行
+            Whether should execute
         """
         if not self.random_browse_enabled:
             return False
@@ -178,28 +180,28 @@ class HumanSimulator:
 
     def get_random_action(self) -> str:
         """
-        获取一个随机动作
+        Get a random action.
 
         Returns:
-            动作名称 ('scroll_up', 'scroll_down', 'wait')
+            Action name ('scroll_up', 'scroll_down', 'wait')
         """
         return random.choice(self.random_actions)
 
     def execute_random_action(self, adb_controller) -> bool:
         """
-        执行随机浏览动作
+        Execute random browsing action.
 
         Args:
-            adb_controller: ADBController 实例
+            adb_controller: ADBController instance
 
         Returns:
-            是否执行成功
+            Whether executed successfully
         """
         if not self.should_do_random_action():
             return False
 
         action = self.get_random_action()
-        logger.info(f"执行随机浏览动作: {action}")
+        logger.info(t('log.execute_random_action', action=action))
 
         try:
             screen_size = adb_controller.get_screen_size()
@@ -221,21 +223,21 @@ class HumanSimulator:
             return True
 
         except Exception as e:
-            logger.warning(f"随机动作执行失败: {e}")
+            logger.warning(t('log.random_action_failed', error=e))
             return False
 
     def humanize_typing_delay(self, text: str) -> float:
         """
-        计算人类化的打字延迟
+        Calculate human-like typing delay.
 
         Args:
-            text: 要输入的文本
+            text: Text to input
 
         Returns:
-            总延迟秒数
+            Total delay in seconds
         """
-        # 平均每个字符 100-300ms
+        # Average 100-300ms per character
         char_delay = len(text) * random.uniform(0.1, 0.3)
-        # 加上一些随机停顿
+        # Add some random pauses
         pause_delay = random.uniform(0.2, 0.5)
         return char_delay + pause_delay

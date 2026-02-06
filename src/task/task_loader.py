@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-任务加载器
-从文件或其他来源加载任务
+Task Loader
+Load tasks from files or other sources.
 """
 
 import json
@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import List, Optional, Generator
 import csv
 
+from locales import t
 from .task_model import Task, TaskStatus
 
 logger = logging.getLogger(__name__)
@@ -17,22 +18,22 @@ logger = logging.getLogger(__name__)
 
 class TaskLoader:
     """
-    任务加载器
+    Task Loader
 
-    支持从多种来源加载任务：
-    - JSON 文件（单个任务）
-    - JSON 文件（任务列表）
-    - CSV 文件
-    - 文本文件（每行一个 URL）
-    - 目录（批量加载）
+    Supports loading tasks from multiple sources:
+    - JSON file (single task)
+    - JSON file (task list)
+    - CSV file
+    - Text file (one URL per line)
+    - Directory (batch load)
     """
 
     def __init__(self, tasks_dir: str = None):
         """
-        初始化任务加载器
+        Initialize task loader.
 
         Args:
-            tasks_dir: 任务目录路径，默认使用 tasks/
+            tasks_dir: Tasks directory path, defaults to tasks/
         """
         if tasks_dir:
             self.tasks_dir = Path(tasks_dir)
@@ -41,24 +42,24 @@ class TaskLoader:
 
     def load_from_json(self, file_path: str) -> List[Task]:
         """
-        从 JSON 文件加载任务
+        Load tasks from JSON file.
 
         Args:
-            file_path: JSON 文件路径
+            file_path: JSON file path
 
         Returns:
-            任务列表
+            Task list
         """
         path = Path(file_path)
         if not path.exists():
-            logger.error(f"文件不存在: {file_path}")
+            logger.error(t('log.file_not_found', path=file_path))
             return []
 
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
 
-            # 判断是单个任务还是任务列表
+            # Determine if single task or task list
             if isinstance(data, list):
                 tasks = [Task.from_dict(item) for item in data]
             elif isinstance(data, dict):
@@ -67,36 +68,36 @@ class TaskLoader:
                 else:
                     tasks = [Task.from_dict(data)]
             else:
-                logger.error(f"无效的 JSON 格式: {file_path}")
+                logger.error(t('log.invalid_json_format', path=file_path))
                 return []
 
-            logger.info(f"从 {file_path} 加载了 {len(tasks)} 个任务")
+            logger.info(t('log.tasks_loaded_count', path=file_path, count=len(tasks)))
             return tasks
 
         except json.JSONDecodeError as e:
-            logger.error(f"JSON 解析失败: {e}")
+            logger.error(t('log.json_parse_error', error=e))
             return []
         except Exception as e:
-            logger.error(f"加载任务失败: {e}")
+            logger.error(t('log.task_load_error', error=e))
             return []
 
     def load_from_csv(self, file_path: str) -> List[Task]:
         """
-        从 CSV 文件加载任务
+        Load tasks from CSV file.
 
-        CSV 格式：
-        - 必须有 'url' 或 'product_url' 列
-        - 可选列：platform, video_duration, priority
+        CSV format:
+        - Must have 'url' or 'product_url' column
+        - Optional columns: platform, video_duration, priority
 
         Args:
-            file_path: CSV 文件路径
+            file_path: CSV file path
 
         Returns:
-            任务列表
+            Task list
         """
         path = Path(file_path)
         if not path.exists():
-            logger.error(f"文件不存在: {file_path}")
+            logger.error(t('log.file_not_found', path=file_path))
             return []
 
         tasks = []
@@ -105,19 +106,19 @@ class TaskLoader:
                 reader = csv.DictReader(f)
 
                 for row in reader:
-                    # 获取 URL
+                    # Get URL
                     url = row.get('url') or row.get('product_url') or row.get('URL')
                     if not url:
                         continue
 
-                    # 创建任务
+                    # Create task
                     task_data = {
                         'product_url': url.strip(),
                         'platform': row.get('platform', ''),
                         'video_duration': int(row.get('video_duration', 30)),
                     }
 
-                    # 处理优先级
+                    # Handle priority
                     if 'priority' in row:
                         try:
                             task_data['priority'] = int(row['priority'])
@@ -126,26 +127,26 @@ class TaskLoader:
 
                     tasks.append(Task.from_dict(task_data))
 
-            logger.info(f"从 {file_path} 加载了 {len(tasks)} 个任务")
+            logger.info(t('log.tasks_loaded_count', path=file_path, count=len(tasks)))
             return tasks
 
         except Exception as e:
-            logger.error(f"加载 CSV 失败: {e}")
+            logger.error(t('log.csv_load_error', error=e))
             return []
 
     def load_from_text(self, file_path: str) -> List[Task]:
         """
-        从文本文件加载任务（每行一个 URL）
+        Load tasks from text file (one URL per line).
 
         Args:
-            file_path: 文本文件路径
+            file_path: Text file path
 
         Returns:
-            任务列表
+            Task list
         """
         path = Path(file_path)
         if not path.exists():
-            logger.error(f"文件不存在: {file_path}")
+            logger.error(t('log.file_not_found', path=file_path))
             return []
 
         tasks = []
@@ -153,22 +154,22 @@ class TaskLoader:
             with open(path, 'r', encoding='utf-8') as f:
                 for line in f:
                     url = line.strip()
-                    if url and not url.startswith('#'):  # 跳过空行和注释
+                    if url and not url.startswith('#'):  # Skip empty lines and comments
                         tasks.append(Task.from_url(url))
 
-            logger.info(f"从 {file_path} 加载了 {len(tasks)} 个任务")
+            logger.info(t('log.tasks_loaded_count', path=file_path, count=len(tasks)))
             return tasks
 
         except Exception as e:
-            logger.error(f"加载文本文件失败: {e}")
+            logger.error(t('log.text_load_error', error=e))
             return []
 
     def load_pending_tasks(self) -> List[Task]:
         """
-        加载所有待处理任务
+        Load all pending tasks.
 
         Returns:
-            任务列表
+            Task list
         """
         pending_dir = self.tasks_dir / 'pending'
         if not pending_dir.exists():
@@ -179,16 +180,16 @@ class TaskLoader:
             loaded = self.load_from_json(str(file_path))
             tasks.extend(loaded)
 
-        # 加载重试任务
+        # Load retry tasks
         retry_tasks = [t for t in tasks if t.status == TaskStatus.RETRY]
         pending_tasks = [t for t in tasks if t.status == TaskStatus.PENDING]
 
-        # 重试任务优先
+        # Retry tasks have priority
         return retry_tasks + pending_tasks
 
     def load_all_tasks(self) -> dict:
         """
-        加载所有任务（按状态分组）
+        Load all tasks (grouped by status).
 
         Returns:
             {'pending': [...], 'completed': [...], 'failed': [...]}
@@ -210,19 +211,19 @@ class TaskLoader:
 
     def scan_directory(self, directory: str) -> Generator[Task, None, None]:
         """
-        扫描目录中的任务文件
+        Scan task files in directory.
 
         Args:
-            directory: 目录路径
+            directory: Directory path
 
         Yields:
-            Task 对象
+            Task objects
         """
         path = Path(directory)
         if not path.exists():
             return
 
-        # 支持的文件格式
+        # Supported file formats
         for json_file in path.glob('**/*.json'):
             for task in self.load_from_json(str(json_file)):
                 yield task
@@ -237,25 +238,25 @@ class TaskLoader:
 
     def create_task_from_urls(self, urls: List[str], **default_params) -> List[Task]:
         """
-        从 URL 列表创建任务
+        Create tasks from URL list.
 
         Args:
-            urls: URL 列表
-            **default_params: 默认任务参数
+            urls: URL list
+            **default_params: Default task parameters
 
         Returns:
-            任务列表
+            Task list
         """
         return [Task.from_url(url, **default_params) for url in urls]
 
     def move_task_file(self, task: Task, from_status: str, to_status: str):
         """
-        移动任务文件到对应状态目录
+        Move task file to corresponding status directory.
 
         Args:
-            task: 任务对象
-            from_status: 原状态目录名
-            to_status: 目标状态目录名
+            task: Task object
+            from_status: Original status directory name
+            to_status: Target status directory name
         """
         from_dir = self.tasks_dir / from_status
         to_dir = self.tasks_dir / to_status
@@ -266,7 +267,7 @@ class TaskLoader:
 
         if from_path.exists():
             from_path.rename(to_path)
-            logger.debug(f"移动任务文件: {from_path} -> {to_path}")
+            logger.debug(t('log.task_file_moved', from_path=from_path, to_path=to_path))
         else:
-            # 文件不存在，直接保存到目标目录
+            # File doesn't exist, save directly to target directory
             task.save_to_file(self.tasks_dir)

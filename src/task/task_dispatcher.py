@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-任务分配器
-负责将任务分配到多台设备
+Task Dispatcher
+Responsible for dispatching tasks to multiple devices.
 """
 
 import logging
@@ -11,21 +11,22 @@ from dataclasses import dataclass
 from queue import Queue
 from threading import Lock
 
+from locales import t
 from .task_model import Task
 
 logger = logging.getLogger(__name__)
 
 
 class DispatchStrategy(Enum):
-    """任务分配策略"""
-    ROUND_ROBIN = "round_robin"     # 轮询分配
-    LOAD_BALANCE = "load_balance"   # 负载均衡（基于已完成任务数）
-    RANDOM = "random"               # 随机分配
+    """Task dispatch strategy"""
+    ROUND_ROBIN = "round_robin"     # Round-robin dispatch
+    LOAD_BALANCE = "load_balance"   # Load balance (based on completed tasks)
+    RANDOM = "random"               # Random dispatch
 
 
 @dataclass
 class DeviceTaskQueue:
-    """设备任务队列"""
+    """Device task queue"""
     device_id: str
     tasks: List[Task]
     completed_count: int = 0
@@ -33,26 +34,26 @@ class DeviceTaskQueue:
 
     @property
     def pending_count(self) -> int:
-        """待处理任务数"""
+        """Pending task count"""
         return len(self.tasks) - self.completed_count - self.failed_count
 
 
 class TaskDispatcher:
     """
-    任务分配器
+    Task Dispatcher
 
-    功能：
-    - 将任务列表分配到多台设备
-    - 支持多种分配策略
-    - 线程安全的任务获取
+    Features:
+    - Dispatch task list to multiple devices
+    - Support multiple dispatch strategies
+    - Thread-safe task retrieval
     """
 
     def __init__(self, strategy: DispatchStrategy = DispatchStrategy.ROUND_ROBIN):
         """
-        初始化任务分配器
+        Initialize task dispatcher.
 
         Args:
-            strategy: 分配策略
+            strategy: Dispatch strategy
         """
         self.strategy = strategy
         self._device_queues: Dict[str, Queue] = {}
@@ -62,36 +63,36 @@ class TaskDispatcher:
 
     def dispatch(self, tasks: List[Task], device_ids: List[str]) -> Dict[str, List[Task]]:
         """
-        将任务分配到设备
+        Dispatch tasks to devices.
 
         Args:
-            tasks: 任务列表
-            device_ids: 设备 ID 列表
+            tasks: Task list
+            device_ids: Device ID list
 
         Returns:
-            设备任务分配字典 {device_id: [tasks]}
+            Device task distribution dict {device_id: [tasks]}
         """
         if not tasks:
-            logger.warning("没有任务需要分配")
+            logger.warning(t('log.no_tasks_to_dispatch'))
             return {}
 
         if not device_ids:
-            logger.error("没有可用设备")
+            logger.error(t('log.no_devices_available'))
             return {}
 
         self._all_tasks = tasks
         num_devices = len(device_ids)
         num_tasks = len(tasks)
 
-        logger.info(f"开始分配任务: {num_tasks} 个任务 -> {num_devices} 台设备")
-        logger.info(f"分配策略: {self.strategy.value}")
+        logger.info(t('log.dispatch_start', task_count=num_tasks, device_count=num_devices))
+        logger.info(t('log.dispatch_strategy', strategy=self.strategy.value))
 
-        # 初始化设备队列
+        # Initialize device queues
         for device_id in device_ids:
             self._device_queues[device_id] = Queue()
             self._device_stats[device_id] = DeviceTaskQueue(device_id=device_id, tasks=[])
 
-        # 根据策略分配
+        # Dispatch based on strategy
         if self.strategy == DispatchStrategy.ROUND_ROBIN:
             self._dispatch_round_robin(tasks, device_ids)
         elif self.strategy == DispatchStrategy.LOAD_BALANCE:
@@ -99,27 +100,27 @@ class TaskDispatcher:
         elif self.strategy == DispatchStrategy.RANDOM:
             self._dispatch_random(tasks, device_ids)
 
-        # 构建返回结果
+        # Build return result
         result = {}
         for device_id in device_ids:
             result[device_id] = self._device_stats[device_id].tasks
-            logger.info(f"  设备 {device_id}: 分配 {len(result[device_id])} 个任务")
+            logger.info(t('log.device_assigned_tasks', device_id=device_id, count=len(result[device_id])))
 
         return result
 
     def _dispatch_round_robin(self, tasks: List[Task], device_ids: List[str]):
-        """轮询分配"""
+        """Round-robin dispatch"""
         for i, task in enumerate(tasks):
             device_id = device_ids[i % len(device_ids)]
             self._assign_task(device_id, task)
 
     def _dispatch_load_balance(self, tasks: List[Task], device_ids: List[str]):
         """
-        负载均衡分配
-        优先分配给任务数最少的设备
+        Load balance dispatch.
+        Prioritize devices with fewest tasks.
         """
         for task in tasks:
-            # 找到任务数最少的设备
+            # Find device with fewest tasks
             min_device = min(
                 device_ids,
                 key=lambda d: len(self._device_stats[d].tasks)
@@ -127,27 +128,27 @@ class TaskDispatcher:
             self._assign_task(min_device, task)
 
     def _dispatch_random(self, tasks: List[Task], device_ids: List[str]):
-        """随机分配"""
+        """Random dispatch"""
         import random
         for task in tasks:
             device_id = random.choice(device_ids)
             self._assign_task(device_id, task)
 
     def _assign_task(self, device_id: str, task: Task):
-        """将任务分配给设备"""
+        """Assign task to device"""
         with self._lock:
             self._device_queues[device_id].put(task)
             self._device_stats[device_id].tasks.append(task)
 
     def get_next_task(self, device_id: str) -> Optional[Task]:
         """
-        获取设备的下一个任务
+        Get next task for device.
 
         Args:
-            device_id: 设备 ID
+            device_id: Device ID
 
         Returns:
-            任务对象，如果队列为空返回 None
+            Task object, None if queue is empty
         """
         queue = self._device_queues.get(device_id)
         if not queue or queue.empty():
@@ -160,22 +161,22 @@ class TaskDispatcher:
                 return None
 
     def get_device_tasks(self, device_id: str) -> List[Task]:
-        """获取设备的所有任务"""
+        """Get all tasks for device"""
         stats = self._device_stats.get(device_id)
         return stats.tasks if stats else []
 
     def get_device_queue_size(self, device_id: str) -> int:
-        """获取设备队列剩余任务数"""
+        """Get remaining task count in device queue"""
         queue = self._device_queues.get(device_id)
         return queue.qsize() if queue else 0
 
     def record_task_complete(self, device_id: str, success: bool):
         """
-        记录任务完成
+        Record task completion.
 
         Args:
-            device_id: 设备 ID
-            success: 是否成功
+            device_id: Device ID
+            success: Whether successful
         """
         with self._lock:
             if device_id in self._device_stats:
@@ -186,10 +187,10 @@ class TaskDispatcher:
 
     def get_progress(self) -> Dict[str, any]:
         """
-        获取整体进度
+        Get overall progress.
 
         Returns:
-            进度信息字典
+            Progress info dict
         """
         total = len(self._all_tasks)
         completed = sum(s.completed_count for s in self._device_stats.values())
@@ -215,14 +216,14 @@ class TaskDispatcher:
         }
 
     def is_all_done(self) -> bool:
-        """检查是否所有任务已完成"""
+        """Check if all tasks are done"""
         for queue in self._device_queues.values():
             if not queue.empty():
                 return False
         return True
 
     def get_statistics(self) -> Dict[str, any]:
-        """获取统计信息"""
+        """Get statistics"""
         return {
             'strategy': self.strategy.value,
             'total_tasks': len(self._all_tasks),
@@ -232,18 +233,18 @@ class TaskDispatcher:
 
 
 if __name__ == "__main__":
-    # 测试代码
+    # Test code
     logging.basicConfig(level=logging.INFO)
 
     from .task_model import Task
 
-    # 创建测试任务
+    # Create test tasks
     tasks = [Task.from_url(f"https://item.taobao.com/item.htm?id={i}") for i in range(10)]
     devices = ["device1", "device2", "device3"]
 
-    # 测试轮询分配
+    # Test round-robin dispatch
     dispatcher = TaskDispatcher(strategy=DispatchStrategy.ROUND_ROBIN)
     result = dispatcher.dispatch(tasks, devices)
 
     for device_id, device_tasks in result.items():
-        print(f"{device_id}: {len(device_tasks)} 任务")
+        print(f"{device_id}: {len(device_tasks)} tasks")

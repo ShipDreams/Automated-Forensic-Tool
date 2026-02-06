@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-设备管理器
-负责多设备发现、状态跟踪、健康检查
+Device Manager
+Responsible for multi-device discovery, status tracking, and health checks.
 """
 
 import subprocess
@@ -12,21 +12,23 @@ from dataclasses import dataclass, field
 from enum import Enum
 from datetime import datetime
 
+from locales import t
+
 logger = logging.getLogger(__name__)
 
 
 class DeviceStatus(Enum):
-    """设备状态"""
-    ONLINE = "online"           # 在线可用
-    OFFLINE = "offline"         # 离线
-    BUSY = "busy"              # 忙碌（正在执行任务）
-    ERROR = "error"            # 错误状态
-    UNAUTHORIZED = "unauthorized"  # 未授权
+    """Device status"""
+    ONLINE = "online"           # Online and available
+    OFFLINE = "offline"         # Offline
+    BUSY = "busy"              # Busy (executing task)
+    ERROR = "error"            # Error state
+    UNAUTHORIZED = "unauthorized"  # Unauthorized
 
 
 @dataclass
 class Device:
-    """设备信息"""
+    """Device information"""
     device_id: str
     status: DeviceStatus = DeviceStatus.ONLINE
     brand: str = ""
@@ -39,7 +41,7 @@ class Device:
     error_message: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
+        """Convert to dictionary"""
         return {
             'device_id': self.device_id,
             'status': self.status.value,
@@ -55,29 +57,29 @@ class Device:
 
 class DeviceManager:
     """
-    设备管理器
+    Device Manager
 
-    功能：
-    - 自动发现所有已连接设备
-    - 设备健康检查
-    - 设备状态跟踪
-    - 设备池管理
+    Features:
+    - Auto-discover all connected devices
+    - Device health check
+    - Device status tracking
+    - Device pool management
     """
 
     def __init__(self):
-        """初始化设备管理器"""
+        """Initialize device manager"""
         self._devices: Dict[str, Device] = {}
-        self._refresh_interval = 30  # 刷新间隔（秒）
+        self._refresh_interval = 30  # Refresh interval (seconds)
         self._last_refresh: Optional[datetime] = None
 
     def discover_devices(self) -> List[Device]:
         """
-        发现所有已连接设备
+        Discover all connected devices.
 
         Returns:
-            设备列表
+            List of devices
         """
-        logger.info("正在发现设备...")
+        logger.info(t('log.discovering_devices'))
 
         try:
             result = subprocess.run(
@@ -88,7 +90,7 @@ class DeviceManager:
             )
 
             devices = []
-            for line in result.stdout.split('\n')[1:]:  # 跳过标题行
+            for line in result.stdout.split('\n')[1:]:  # Skip header line
                 line = line.strip()
                 if not line or 'List of devices' in line:
                     continue
@@ -98,7 +100,7 @@ class DeviceManager:
                     device_id = parts[0]
                     status_str = parts[1]
 
-                    # 解析状态
+                    # Parse status
                     if status_str == 'device':
                         status = DeviceStatus.ONLINE
                     elif status_str == 'offline':
@@ -108,7 +110,7 @@ class DeviceManager:
                     else:
                         status = DeviceStatus.ERROR
 
-                    # 解析额外信息
+                    # Parse extra info
                     model = ""
                     for part in parts[2:]:
                         if part.startswith('model:'):
@@ -121,18 +123,18 @@ class DeviceManager:
                     )
                     devices.append(device)
 
-            logger.info(f"发现 {len(devices)} 台设备")
+            logger.info(t('log.devices_discovered', count=len(devices)))
             self._last_refresh = datetime.now()
 
-            # 更新内部设备列表
+            # Update internal device list
             for device in devices:
                 if device.device_id in self._devices:
-                    # 保留已有的统计信息
+                    # Preserve existing statistics
                     existing = self._devices[device.device_id]
                     device.tasks_completed = existing.tasks_completed
                     device.tasks_failed = existing.tasks_failed
                     device.current_task_id = existing.current_task_id
-                    # 如果正在执行任务，保持 BUSY 状态
+                    # Keep BUSY status if executing task
                     if existing.status == DeviceStatus.BUSY:
                         device.status = DeviceStatus.BUSY
                 self._devices[device.device_id] = device
@@ -140,21 +142,21 @@ class DeviceManager:
             return devices
 
         except subprocess.TimeoutExpired:
-            logger.error("发现设备超时")
+            logger.error(t('log.discover_devices_timeout'))
             return []
         except Exception as e:
-            logger.error(f"发现设备失败: {e}")
+            logger.error(t('log.discover_devices_failed', error=e))
             return []
 
     def get_device_info(self, device_id: str) -> Optional[Device]:
         """
-        获取设备详细信息
+        Get device detailed information.
 
         Args:
-            device_id: 设备 ID
+            device_id: Device ID
 
         Returns:
-            设备信息
+            Device information
         """
         if device_id not in self._devices:
             self.discover_devices()
@@ -163,7 +165,7 @@ class DeviceManager:
         if not device:
             return None
 
-        # 获取更多信息
+        # Get more info
         if not device.brand:
             device.brand = self._get_device_property(device_id, "ro.product.brand")
         if not device.model:
@@ -174,7 +176,7 @@ class DeviceManager:
         return device
 
     def _get_device_property(self, device_id: str, prop: str) -> str:
-        """获取设备属性"""
+        """Get device property"""
         try:
             result = subprocess.run(
                 ["adb", "-s", device_id, "shell", "getprop", prop],
@@ -189,7 +191,7 @@ class DeviceManager:
         return ""
 
     def _get_screen_size(self, device_id: str) -> tuple:
-        """获取屏幕尺寸"""
+        """Get screen size"""
         try:
             result = subprocess.run(
                 ["adb", "-s", device_id, "shell", "wm", "size"],
@@ -210,13 +212,13 @@ class DeviceManager:
 
     def check_device_health(self, device_id: str) -> bool:
         """
-        检查设备健康状态
+        Check device health status.
 
         Args:
-            device_id: 设备 ID
+            device_id: Device ID
 
         Returns:
-            设备是否健康可用
+            Whether device is healthy and available
         """
         try:
             result = subprocess.run(
@@ -238,55 +240,55 @@ class DeviceManager:
             return is_healthy
 
         except subprocess.TimeoutExpired:
-            logger.warning(f"设备 {device_id} 健康检查超时")
+            logger.warning(t('log.device_health_check_timeout', device_id=device_id))
             if device_id in self._devices:
                 self._devices[device_id].status = DeviceStatus.ERROR
             return False
         except Exception as e:
-            logger.error(f"设备 {device_id} 健康检查失败: {e}")
+            logger.error(t('log.device_health_check_failed', device_id=device_id, error=e))
             return False
 
     def get_available_devices(self) -> List[Device]:
         """
-        获取所有可用设备
+        Get all available devices.
 
         Returns:
-            可用设备列表
+            List of available devices
         """
-        # 刷新设备列表
+        # Refresh device list
         self.discover_devices()
 
         available = []
         for device in self._devices.values():
             if device.status == DeviceStatus.ONLINE:
-                # 健康检查
+                # Health check
                 if self.check_device_health(device.device_id):
                     available.append(device)
 
-        logger.info(f"可用设备: {len(available)} 台")
+        logger.info(t('log.available_devices', count=len(available)))
         return available
 
     def mark_device_busy(self, device_id: str, task_id: str):
         """
-        标记设备为忙碌
+        Mark device as busy.
 
         Args:
-            device_id: 设备 ID
-            task_id: 当前任务 ID
+            device_id: Device ID
+            task_id: Current task ID
         """
         if device_id in self._devices:
             self._devices[device_id].status = DeviceStatus.BUSY
             self._devices[device_id].current_task_id = task_id
             self._devices[device_id].last_active = datetime.now().isoformat()
-            logger.debug(f"设备 {device_id} 开始执行任务 {task_id}")
+            logger.debug(t('log.device_start_task', device_id=device_id, task_id=task_id))
 
     def mark_device_available(self, device_id: str, success: bool = True):
         """
-        标记设备为可用
+        Mark device as available.
 
         Args:
-            device_id: 设备 ID
-            success: 上一个任务是否成功
+            device_id: Device ID
+            success: Whether previous task succeeded
         """
         if device_id in self._devices:
             self._devices[device_id].status = DeviceStatus.ONLINE
@@ -298,35 +300,35 @@ class DeviceManager:
             else:
                 self._devices[device_id].tasks_failed += 1
 
-            logger.debug(f"设备 {device_id} 任务完成，成功={success}")
+            logger.debug(t('log.device_task_complete', device_id=device_id, success=success))
 
     def mark_device_error(self, device_id: str, error: str):
         """
-        标记设备为错误状态
+        Mark device as error state.
 
         Args:
-            device_id: 设备 ID
-            error: 错误信息
+            device_id: Device ID
+            error: Error message
         """
         if device_id in self._devices:
             self._devices[device_id].status = DeviceStatus.ERROR
             self._devices[device_id].error_message = error
-            logger.warning(f"设备 {device_id} 进入错误状态: {error}")
+            logger.warning(t('log.device_error_state', device_id=device_id, error=error))
 
     def get_device(self, device_id: str) -> Optional[Device]:
-        """获取设备"""
+        """Get device"""
         return self._devices.get(device_id)
 
     def get_all_devices(self) -> List[Device]:
-        """获取所有设备"""
+        """Get all devices"""
         return list(self._devices.values())
 
     def get_statistics(self) -> Dict[str, Any]:
         """
-        获取设备统计信息
+        Get device statistics.
 
         Returns:
-            统计信息字典
+            Statistics dictionary
         """
         total = len(self._devices)
         online = sum(1 for d in self._devices.values() if d.status == DeviceStatus.ONLINE)
@@ -347,12 +349,12 @@ class DeviceManager:
         }
 
 
-# 单例模式
+# Singleton pattern
 _device_manager_instance: Optional[DeviceManager] = None
 
 
 def get_device_manager() -> DeviceManager:
-    """获取设备管理器单例"""
+    """Get device manager singleton"""
     global _device_manager_instance
     if _device_manager_instance is None:
         _device_manager_instance = DeviceManager()
@@ -360,16 +362,16 @@ def get_device_manager() -> DeviceManager:
 
 
 if __name__ == "__main__":
-    # 测试代码
+    # Test code
     logging.basicConfig(level=logging.INFO)
 
     manager = DeviceManager()
     devices = manager.get_available_devices()
 
     for device in devices:
-        print(f"设备: {device.device_id}")
+        print(f"Device: {device.device_id}")
         info = manager.get_device_info(device.device_id)
         if info:
-            print(f"  品牌: {info.brand}")
-            print(f"  型号: {info.model}")
-            print(f"  分辨率: {info.screen_size}")
+            print(f"  Brand: {info.brand}")
+            print(f"  Model: {info.model}")
+            print(f"  Resolution: {info.screen_size}")

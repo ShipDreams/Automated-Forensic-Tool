@@ -1,6 +1,6 @@
 """
-State Machine Layer - 状态机层
-负责页面状态识别和流程驱动
+State Machine Layer
+Responsible for page state recognition and flow control.
 """
 
 from .state_machine import StateMachine, StateContext, TransitionResult, Transition
@@ -17,17 +17,17 @@ from .states import (
 )
 
 __all__ = [
-    # 状态机
+    # State Machine
     'StateMachine',
     'StateContext',
     'TransitionResult',
     'Transition',
 
-    # 状态检测
+    # State Detection
     'StateDetector',
     'StateMatch',
 
-    # 状态定义
+    # State Definitions
     'PageState',
     'StateFeature',
     'StateDefinition',

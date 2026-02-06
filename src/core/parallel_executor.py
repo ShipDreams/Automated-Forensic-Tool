@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-并行执行器
-负责在多台设备上并行执行取证任务
+Parallel Executor
+Responsible for executing forensic tasks in parallel on multiple devices.
 """
 
 import logging
@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from dataclasses import dataclass
 
+from locales import t
 from core.device_manager import DeviceManager, Device, DeviceStatus
 from core.adb_controller import ADBController
 from core.recorder import ScreenRecorder
@@ -27,25 +28,25 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class DeviceWorkerContext:
-    """设备工作线程上下文"""
+    """Device worker thread context"""
     device_id: str
     adb: ADBController
     recorder: ScreenRecorder
     locator: UILocator
-    antibot: Any = None  # TaobaoAntiBot 实例
-    platform_router: Any = None  # PlatformRouter 实例
+    antibot: Any = None  # TaobaoAntiBot instance
+    platform_router: Any = None  # PlatformRouter instance
 
 
 class ParallelExecutor:
     """
-    并行执行器
+    Parallel Executor
 
-    功能：
-    - 多设备并行执行任务
-    - 每台设备独立的工作线程
-    - 设备级别的状态隔离
-    - 实时进度跟踪
-    - 汇总报告生成
+    Features:
+    - Multi-device parallel task execution
+    - Independent worker thread per device
+    - Device-level state isolation
+    - Real-time progress tracking
+    - Summary report generation
     """
 
     def __init__(
@@ -56,19 +57,19 @@ class ParallelExecutor:
         dispatch_strategy: DispatchStrategy = DispatchStrategy.ROUND_ROBIN
     ):
         """
-        初始化并行执行器
+        Initialize parallel executor.
 
         Args:
-            device_ids: 指定的设备 ID 列表，None 则自动发现
-            max_workers: 最大工作线程数，默认为设备数量
-            enable_antibot: 是否启用防封控
-            dispatch_strategy: 任务分配策略
+            device_ids: Specified device ID list, auto-discover if None
+            max_workers: Maximum worker threads, defaults to device count
+            enable_antibot: Whether to enable anti-detection
+            dispatch_strategy: Task dispatch strategy
         """
         self.device_manager = DeviceManager()
         self.dispatcher = TaskDispatcher(strategy=dispatch_strategy)
         self.enable_antibot = enable_antibot
 
-        # 获取设备列表
+        # Get device list
         if device_ids:
             self._device_ids = device_ids
         else:
@@ -76,19 +77,19 @@ class ParallelExecutor:
             self._device_ids = [d.device_id for d in available_devices]
 
         if not self._device_ids:
-            raise RuntimeError("没有可用的设备")
+            raise RuntimeError(t('log.no_available_devices'))
 
         self.max_workers = max_workers or len(self._device_ids)
-        logger.info(f"并行执行器初始化: {len(self._device_ids)} 台设备, {self.max_workers} 个工作线程")
+        logger.info(t('log.parallel_executor_init', device_count=len(self._device_ids), worker_count=self.max_workers))
 
-        # 设备上下文（每个设备独立的控制器）
+        # Device contexts (independent controller per device)
         self._device_contexts: Dict[str, DeviceWorkerContext] = {}
 
-        # 线程同步
+        # Thread synchronization
         self._lock = Lock()
         self._stop_event = Event()
 
-        # 统计
+        # Statistics
         self.stats = {
             'start_time': None,
             'end_time': None,
@@ -98,26 +99,26 @@ class ParallelExecutor:
             'devices': {}
         }
 
-        # 任务源文件
+        # Task source file
         self._source_file: Optional[str] = None
 
     def _init_device_context(self, device_id: str) -> DeviceWorkerContext:
         """
-        初始化设备上下文
+        Initialize device context.
 
         Args:
-            device_id: 设备 ID
+            device_id: Device ID
 
         Returns:
-            设备工作上下文
+            Device work context
         """
-        logger.info(f"初始化设备 {device_id} 的工作上下文...")
+        logger.info(t('log.init_device_context', device_id=device_id))
 
         adb = ADBController(device_id)
         recorder = ScreenRecorder(adb)
         locator = UILocator(adb)
 
-        # 初始化防封控（如果启用）
+        # Initialize anti-detection (if enabled)
         antibot = None
         if self.enable_antibot:
             try:
@@ -127,19 +128,19 @@ class ParallelExecutor:
                     adb_controller=adb,
                     ui_locator=locator,
                     config=config,
-                    device_id=device_id  # 关键：使用设备 ID 隔离状态
+                    device_id=device_id  # Key: use device ID to isolate state
                 )
-                logger.info(f"设备 {device_id}: TaobaoAntiBot 已初始化")
+                logger.info(t('log.device_antibot_initialized', device_id=device_id))
             except Exception as e:
-                logger.warning(f"设备 {device_id}: TaobaoAntiBot 初始化失败: {e}")
+                logger.warning(t('log.device_antibot_init_failed', device_id=device_id, error=e))
 
-        # 初始化平台路由器
+        # Initialize platform router
         platform_router = None
         try:
             from platforms import PlatformRouter
             platform_router = PlatformRouter(adb, locator, antibot)
         except Exception as e:
-            logger.warning(f"设备 {device_id}: PlatformRouter 初始化失败: {e}")
+            logger.warning(t('log.device_router_init_failed', device_id=device_id, error=e))
 
         context = DeviceWorkerContext(
             device_id=device_id,
@@ -154,7 +155,7 @@ class ParallelExecutor:
         return context
 
     def _load_antibot_config(self) -> dict:
-        """加载防封控配置"""
+        """Load anti-detection config"""
         config_path = Path(__file__).parent.parent / 'config' / 'antibot.json'
         if config_path.exists():
             try:
@@ -162,7 +163,7 @@ class ParallelExecutor:
                     config = json.load(f)
                 return config.get('taobao', {})
             except Exception as e:
-                logger.warning(f"加载防封控配置失败: {e}")
+                logger.warning(t('log.load_antibot_config_failed', error=e))
         return {}
 
     def run(
@@ -172,31 +173,31 @@ class ParallelExecutor:
         video_duration: int = 30
     ) -> Dict[str, Any]:
         """
-        并行执行任务
+        Execute tasks in parallel.
 
         Args:
-            tasks: 任务列表
-            delay_between_tasks: 任务间延迟（秒）
-            video_duration: 视频录制时长
+            tasks: Task list
+            delay_between_tasks: Delay between tasks (seconds)
+            video_duration: Video recording duration
 
         Returns:
-            执行统计
+            Execution statistics
         """
         if not tasks:
-            logger.warning("没有任务需要执行")
+            logger.warning(t('log.no_tasks_to_execute'))
             return self.stats
 
         self.stats['start_time'] = datetime.now().isoformat()
         self.stats['total_tasks'] = len(tasks)
 
-        # 分配任务
+        # Dispatch tasks
         task_distribution = self.dispatcher.dispatch(tasks, self._device_ids)
 
         logger.info("=" * 60)
-        logger.info(f"开始并行执行: {len(tasks)} 个任务, {len(self._device_ids)} 台设备")
+        logger.info(t('log.parallel_execution_start', task_count=len(tasks), device_count=len(self._device_ids)))
         logger.info("=" * 60)
 
-        # 初始化设备统计
+        # Initialize device statistics
         for device_id in self._device_ids:
             self.stats['devices'][device_id] = {
                 'total': len(task_distribution.get(device_id, [])),
@@ -204,11 +205,11 @@ class ParallelExecutor:
                 'failed': 0
             }
 
-        # 创建线程池
+        # Create thread pool
         with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             futures: Dict[Future, str] = {}
 
-            # 为每台设备启动工作线程
+            # Start worker thread for each device
             for device_id in self._device_ids:
                 device_tasks = task_distribution.get(device_id, [])
                 if not device_tasks:
@@ -223,25 +224,25 @@ class ParallelExecutor:
                 )
                 futures[future] = device_id
 
-            # 等待所有任务完成
+            # Wait for all tasks to complete
             try:
                 for future in as_completed(futures):
                     device_id = futures[future]
                     try:
                         result = future.result()
-                        logger.info(f"设备 {device_id} 任务执行完成: {result}")
+                        logger.info(t('log.device_task_execution_complete', device_id=device_id, result=result))
                     except Exception as e:
-                        logger.error(f"设备 {device_id} 执行异常: {e}")
+                        logger.error(t('log.device_execution_exception', device_id=device_id, error=e))
 
             except KeyboardInterrupt:
-                logger.warning("用户中断，正在停止所有任务...")
+                logger.warning(t('log.user_interrupt_stopping'))
                 self._stop_event.set()
-                # 等待线程优雅退出
+                # Wait for threads to exit gracefully
                 executor.shutdown(wait=True, cancel_futures=True)
 
         self.stats['end_time'] = datetime.now().isoformat()
 
-        # 汇总统计
+        # Finalize statistics
         self._finalize_stats()
 
         return self.stats
@@ -254,20 +255,20 @@ class ParallelExecutor:
         video_duration: int
     ) -> Dict[str, int]:
         """
-        设备工作线程
+        Device worker thread.
 
         Args:
-            device_id: 设备 ID
-            tasks: 该设备的任务列表
-            delay_between_tasks: 任务间延迟
-            video_duration: 视频录制时长
+            device_id: Device ID
+            tasks: Task list for this device
+            delay_between_tasks: Delay between tasks
+            video_duration: Video recording duration
 
         Returns:
-            执行统计 {completed, failed}
+            Execution statistics {completed, failed}
         """
-        logger.info(f"[{device_id}] 工作线程启动，共 {len(tasks)} 个任务")
+        logger.info(t('log.worker_thread_started', device_id=device_id, task_count=len(tasks)))
 
-        # 初始化设备上下文
+        # Initialize device context
         context = self._init_device_context(device_id)
         self.device_manager.mark_device_busy(device_id, "batch_tasks")
 
@@ -275,12 +276,12 @@ class ParallelExecutor:
         failed = 0
 
         for i, task in enumerate(tasks):
-            # 检查停止信号
+            # Check stop signal
             if self._stop_event.is_set():
-                logger.info(f"[{device_id}] 收到停止信号，终止执行")
+                logger.info(t('log.stop_signal_received', device_id=device_id))
                 break
 
-            logger.info(f"[{device_id}] 执行任务 {i+1}/{len(tasks)}: {task.product_url[:50]}...")
+            logger.info(t('log.executing_task_n', device_id=device_id, current=i+1, total=len(tasks), url=task.product_url[:50]))
 
             try:
                 success = self._execute_task(context, task, video_duration)
@@ -298,20 +299,20 @@ class ParallelExecutor:
                 self.dispatcher.record_task_complete(device_id, success)
 
             except Exception as e:
-                logger.error(f"[{device_id}] 任务执行异常: {e}")
+                logger.error(t('log.task_execution_exception', device_id=device_id, error=e))
                 with self._lock:
                     failed += 1
                     self.stats['failed'] += 1
                     self.stats['devices'][device_id]['failed'] += 1
 
-            # 任务间延迟（最后一个任务不需要）
+            # Delay between tasks (not needed for last task)
             if i < len(tasks) - 1 and not self._stop_event.is_set():
-                logger.info(f"[{device_id}] 等待 {delay_between_tasks} 秒...")
+                logger.info(t('log.waiting_between_tasks', device_id=device_id, seconds=delay_between_tasks))
                 time.sleep(delay_between_tasks)
 
-        # 清理
+        # Cleanup
         self.device_manager.mark_device_available(device_id, success=(failed == 0))
-        logger.info(f"[{device_id}] 工作线程结束: 成功 {completed}, 失败 {failed}")
+        logger.info(t('log.worker_thread_ended', device_id=device_id, completed=completed, failed=failed))
 
         return {'completed': completed, 'failed': failed}
 
@@ -322,15 +323,15 @@ class ParallelExecutor:
         video_duration: int
     ) -> bool:
         """
-        执行单个任务
+        Execute single task.
 
         Args:
-            context: 设备上下文
-            task: 任务
-            video_duration: 视频录制时长
+            context: Device context
+            task: Task
+            video_duration: Video recording duration
 
         Returns:
-            是否成功
+            Whether successful
         """
         device_id = context.device_id
         adb = context.adb
@@ -339,11 +340,11 @@ class ParallelExecutor:
         antibot = context.antibot
         router = context.platform_router
 
-        # 悬浮按钮位置缓存
+        # Floating button position cache
         screenshot_button_pos = None
 
         def click_screenshot_button() -> bool:
-            """点击截屏按钮"""
+            """Click screenshot button"""
             nonlocal screenshot_button_pos
             try:
                 if screenshot_button_pos is None:
@@ -358,35 +359,35 @@ class ParallelExecutor:
                     return True
                 return False
             except Exception as e:
-                logger.error(f"[{device_id}] 点击截屏按钮异常: {e}")
+                logger.error(t('log.device_click_screenshot_exception', device_id=device_id, error=e))
                 return False
 
         recording_started = False
 
         try:
-            # 检查冷却状态
+            # Check cooldown status
             if antibot and antibot.is_cooling_down():
                 remaining = antibot.get_remaining_cooldown()
-                logger.warning(f"[{device_id}] 处于冷却期，等待 {int(remaining.total_seconds())} 秒")
+                logger.warning(t('log.device_in_cooldown_waiting', device_id=device_id, seconds=int(remaining.total_seconds())))
                 time.sleep(remaining.total_seconds())
 
-            # 环境检查
+            # Environment check
             if not adb.check_connection():
-                logger.error(f"[{device_id}] 设备连接异常")
+                logger.error(t('log.device_connection_error', device_id=device_id))
                 return False
 
             adb.wake_screen()
 
-            # 启动录屏
+            # Start recording
             adb.enable_visual_feedback()
             time.sleep(1)
 
             if not recorder.start_recording():
-                logger.error(f"[{device_id}] 启动录屏失败")
+                logger.error(t('log.device_start_recording_failed', device_id=device_id))
                 return False
             recording_started = True
 
-            # 展示北京时间
+            # Display Beijing time
             if not adb.open_url("https://www.beijing-time.org/"):
                 self._cancel_recording(recorder, recording_started)
                 return False
@@ -394,7 +395,7 @@ class ParallelExecutor:
             click_screenshot_button()
             time.sleep(5)
 
-            # 平台取证
+            # Platform forensic
             if router:
                 try:
                     handler = router.get_handler(task.product_url)
@@ -404,24 +405,24 @@ class ParallelExecutor:
                         task.video_duration or video_duration
                     )
                     if not success:
-                        logger.error(f"[{device_id}] 平台取证失败: {error}")
+                        logger.error(t('log.device_platform_failed', device_id=device_id, error=error))
                         if antibot:
                             antibot.record_task_done(success=False)
                         self._cancel_recording(recorder, recording_started)
                         return False
                 except Exception as e:
-                    logger.error(f"[{device_id}] 平台取证异常: {e}")
+                    logger.error(t('log.device_platform_exception', device_id=device_id, error=e))
                     self._cancel_recording(recorder, recording_started)
                     return False
 
-            # 停止录屏
+            # Stop recording
             if not recorder.stop_recording():
-                logger.error(f"[{device_id}] 停止录屏失败")
+                logger.error(t('log.device_stop_recording_failed', device_id=device_id))
                 return False
 
             adb.disable_visual_feedback()
 
-            # 防封控处理
+            # Anti-detection handling
             if antibot:
                 is_taobao = any(k in task.product_url.lower() for k in ['taobao', 'tmall', 'tb.cn'])
                 if is_taobao:
@@ -429,22 +430,22 @@ class ParallelExecutor:
                     if should_browse:
                         antibot.execute_cycle_end_actions()
                     if should_cooldown:
-                        antibot.trigger_cooldown("完成多个周期")
+                        antibot.trigger_cooldown("Completed multiple cycles")
                         antibot.close_taobao()
 
-            # 关闭应用，保证下次初始状态
+            # Close apps to ensure initial state for next task
             adb.force_stop_app("com.taobao.taobao")
             adb.force_stop_app("com.a1010bao.web.rdbao")
 
             return True
 
         except Exception as e:
-            logger.error(f"[{device_id}] 任务执行异常: {e}")
+            logger.error(t('log.device_task_exception', device_id=device_id, error=e))
             self._cancel_recording(recorder, recording_started)
             return False
 
     def _cancel_recording(self, recorder: ScreenRecorder, recording_started: bool):
-        """取消录屏"""
+        """Cancel recording"""
         if recording_started:
             try:
                 recorder.cancel_recording()
@@ -452,36 +453,36 @@ class ParallelExecutor:
                 pass
 
     def _finalize_stats(self):
-        """最终统计"""
+        """Finalize statistics"""
         logger.info("=" * 60)
-        logger.info("并行执行完成 - 统计汇总")
+        logger.info(t('log.parallel_execution_complete'))
         logger.info("=" * 60)
-        logger.info(f"总任务数: {self.stats['total_tasks']}")
-        logger.info(f"成功: {self.stats['completed']}")
-        logger.info(f"失败: {self.stats['failed']}")
+        logger.info(t('log.total_tasks', count=self.stats['total_tasks']))
+        logger.info(t('log.success_count', count=self.stats['completed']))
+        logger.info(t('log.failed_count', count=self.stats['failed']))
 
         if self.stats['start_time'] and self.stats['end_time']:
             start = datetime.fromisoformat(self.stats['start_time'])
             end = datetime.fromisoformat(self.stats['end_time'])
             duration = end - start
-            logger.info(f"总耗时: {duration}")
+            logger.info(t('log.total_duration', duration=duration))
 
         logger.info("-" * 40)
-        logger.info("各设备统计:")
+        logger.info(t('log.device_statistics'))
         for device_id, device_stats in self.stats['devices'].items():
-            logger.info(f"  {device_id}: 总计 {device_stats['total']}, "
-                       f"成功 {device_stats['completed']}, 失败 {device_stats['failed']}")
+            logger.info(t('log.device_stat_line', device_id=device_id, total=device_stats['total'],
+                         completed=device_stats['completed'], failed=device_stats['failed']))
         logger.info("=" * 60)
 
     def generate_report(self, output_dir: str = None) -> str:
         """
-        生成执行报告
+        Generate execution report.
 
         Args:
-            output_dir: 输出目录
+            output_dir: Output directory
 
         Returns:
-            报告文件路径
+            Report file path
         """
         if output_dir:
             reports_dir = Path(output_dir)
@@ -493,7 +494,7 @@ class ParallelExecutor:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         report_file = reports_dir / f'parallel_report_{timestamp}.json'
 
-        # 计算耗时
+        # Calculate duration
         duration_seconds = 0
         if self.stats['start_time'] and self.stats['end_time']:
             start = datetime.fromisoformat(self.stats['start_time'])
@@ -518,18 +519,18 @@ class ParallelExecutor:
         with open(report_file, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"✓ 并行执行报告已生成: {report_file}")
+        logger.info(t('log.parallel_report_generated', path=report_file))
         return str(report_file)
 
     def load_tasks_from_file(self, file_path: str) -> List[Task]:
         """
-        从文件加载任务
+        Load tasks from file.
 
         Args:
-            file_path: 任务文件路径
+            file_path: Task file path
 
         Returns:
-            任务列表
+            Task list
         """
         self._source_file = str(Path(file_path).resolve())
         loader = TaskLoader()
@@ -542,10 +543,10 @@ class ParallelExecutor:
         elif path.suffix == '.txt':
             tasks = loader.load_from_text(file_path)
         else:
-            logger.error(f"不支持的文件格式: {path.suffix}")
+            logger.error(t('log.unsupported_file_format', suffix=path.suffix))
             return []
 
-        logger.info(f"从 {file_path} 加载了 {len(tasks)} 个任务")
+        logger.info(t('log.tasks_loaded_from_file', count=len(tasks), file=file_path))
         return tasks
 
 
@@ -557,19 +558,19 @@ def run_parallel_mode(
     strategy: str = "round_robin"
 ) -> bool:
     """
-    运行并行模式
+    Run parallel mode.
 
     Args:
-        task_file: 任务文件路径
-        device_ids: 设备 ID 列表（可选）
-        video_duration: 视频录制时长
-        enable_antibot: 是否启用防封控
-        strategy: 分配策略
+        task_file: Task file path
+        device_ids: Device ID list (optional)
+        video_duration: Video recording duration
+        enable_antibot: Whether to enable anti-detection
+        strategy: Dispatch strategy
 
     Returns:
-        是否成功
+        Whether successful
     """
-    # 解析分配策略
+    # Parse dispatch strategy
     strategy_map = {
         'round_robin': DispatchStrategy.ROUND_ROBIN,
         'load_balance': DispatchStrategy.LOAD_BALANCE,
@@ -584,33 +585,33 @@ def run_parallel_mode(
             dispatch_strategy=dispatch_strategy
         )
 
-        # 加载任务
+        # Load tasks
         tasks = executor.load_tasks_from_file(task_file)
         if not tasks:
-            logger.error("没有加载到任务")
+            logger.error(t('log.no_tasks_loaded_from_file'))
             return False
 
-        # 执行
+        # Execute
         stats = executor.run(
             tasks=tasks,
             delay_between_tasks=10,
             video_duration=video_duration
         )
 
-        # 生成报告
+        # Generate report
         executor.generate_report()
 
         return stats.get('failed', 0) == 0
 
     except Exception as e:
-        logger.error(f"并行执行失败: {e}")
+        logger.error(t('log.parallel_execution_failed', error=e))
         return False
 
 
 if __name__ == "__main__":
-    # 测试代码
+    # Test code
     logging.basicConfig(level=logging.INFO)
 
     manager = DeviceManager()
     devices = manager.get_available_devices()
-    print(f"可用设备: {[d.device_id for d in devices]}")
+    print(f"Available devices: {[d.device_id for d in devices]}")

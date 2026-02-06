@@ -1,6 +1,6 @@
 """
-Core Layer - 核心层
-包含 ADB 控制、UI 定位、录屏管理等基础能力
+Core Layer
+Contains ADB control, UI locator, screen recording and other base capabilities.
 """
 
 from .adb_controller import ADBController
