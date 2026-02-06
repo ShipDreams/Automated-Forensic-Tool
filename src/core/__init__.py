@@ -8,6 +8,7 @@ from .ui_locator import UILocator, UIElement
 from .recorder import ScreenRecorder
 from .device_manager import DeviceManager, Device, DeviceStatus, get_device_manager
 from .parallel_executor import ParallelExecutor, run_parallel_mode
+from .notifier import CrossPlatformNotifier, get_notifier, notify_captcha
 
 __all__ = [
     'ADBController',
@@ -20,4 +21,7 @@ __all__ = [
     'get_device_manager',
     'ParallelExecutor',
     'run_parallel_mode',
+    'CrossPlatformNotifier',
+    'get_notifier',
+    'notify_captcha',
 ]

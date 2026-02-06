@@ -1,7 +1,7 @@
 # Android 自动取证 MVP 项目依赖
 
-# 核心依赖：无
-# 本项目仅使用 Python 标准库，无需安装额外依赖
+# Desktop notification (cross-platform)
+plyer>=2.1.0
 
 # Python 版本要求
 # python >= 3.8
@@ -11,6 +11,9 @@
 #   Mac 安装: brew install --cask android-platform-tools
 #   Linux 安装: apt-get install android-tools-adb
 #   Windows 安装: 下载 Android SDK Platform Tools
+#
+# - libnotify (Linux only, for desktop notifications)
+#   Linux 安装: apt-get install libnotify-bin
 
 # 可选依赖（用于开发和测试）
 # pytest>=7.0.0
