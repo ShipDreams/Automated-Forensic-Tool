@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-冷却管理器
-控制任务执行频率，避免触发风控
+Cooldown Manager
+Controls task execution frequency to avoid triggering risk controls.
 """
 
 import time
@@ -11,59 +11,61 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import json
 
+from locales import t
+
 logger = logging.getLogger(__name__)
 
 
 class CooldownManager:
     """
-    冷却管理器
+    Cooldown Manager
 
-    核心功能：
-    - 连续任务计数
-    - 风险触发后自动冷却
-    - 冷却状态持久化（支持按设备ID区分）
+    Core features:
+    - Continuous task counting
+    - Auto cooldown after risk detection
+    - Cooldown state persistence (supports per-device differentiation)
     """
 
     def __init__(self, config: dict = None, state_file: str = None, device_id: str = None):
         """
-        初始化冷却管理器
+        Initialize cooldown manager.
 
         Args:
-            config: 配置字典，来自 config/antibot.json 的 cooldown 部分
-            state_file: 状态文件路径（用于持久化）
-            device_id: 设备 ID（用于多设备状态区分）
+            config: Config dictionary, from config/antibot.json cooldown section
+            state_file: State file path (for persistence)
+            device_id: Device ID (for multi-device state differentiation)
         """
         self.config = config or {}
         self.device_id = device_id or "default"
         self._load_config()
 
-        # 状态文件（支持按设备ID区分）
+        # State file (supports per-device differentiation)
         if state_file:
             self.state_file = Path(state_file)
         else:
             state_dir = Path(__file__).parent.parent.parent / 'logs'
             state_dir.mkdir(parents=True, exist_ok=True)
-            # 使用设备ID作为文件名后缀
+            # Use device ID as filename suffix
             safe_device_id = self.device_id.replace(':', '_').replace('/', '_')
             self.state_file = state_dir / f'cooldown_state_{safe_device_id}.json'
 
-        # 运行时状态
+        # Runtime state
         self.continuous_tasks = 0
         self.cooldown_until: Optional[datetime] = None
         self.last_task_time: Optional[datetime] = None
 
-        # 加载持久化状态
+        # Load persisted state
         self._load_state()
 
     def _load_config(self):
-        """加载配置参数"""
+        """Load config parameters."""
         self.enabled = self.config.get('enabled', True)
         self.trigger_on_risk = self.config.get('trigger_on_risk', True)
         self.duration_minutes = self.config.get('duration_minutes', 15)
         self.max_continuous_tasks = self.config.get('max_continuous_tasks', 10)
 
     def _load_state(self):
-        """从文件加载状态"""
+        """Load state from file."""
         if not self.state_file.exists():
             return
 
@@ -76,7 +78,7 @@ class CooldownManager:
             cooldown_str = data.get('cooldown_until')
             if cooldown_str:
                 self.cooldown_until = datetime.fromisoformat(cooldown_str)
-                # 检查是否已过期
+                # Check if expired
                 if self.cooldown_until < datetime.now():
                     self.cooldown_until = None
                     self.continuous_tasks = 0
@@ -85,13 +87,15 @@ class CooldownManager:
             if last_task_str:
                 self.last_task_time = datetime.fromisoformat(last_task_str)
 
-            logger.info(f"加载冷却状态: 连续任务={self.continuous_tasks}, 冷却中={self.is_cooling_down()}")
+            logger.info(t('log.cooldown_state_loaded',
+                         tasks=self.continuous_tasks,
+                         cooling=self.is_cooling_down()))
 
         except Exception as e:
-            logger.warning(f"加载冷却状态失败: {e}")
+            logger.warning(t('log.cooldown_state_load_failed', error=e))
 
     def _save_state(self):
-        """保存状态到文件"""
+        """Save state to file."""
         try:
             self.state_file.parent.mkdir(parents=True, exist_ok=True)
 
@@ -105,14 +109,14 @@ class CooldownManager:
                 json.dump(data, f, ensure_ascii=False, indent=2)
 
         except Exception as e:
-            logger.warning(f"保存冷却状态失败: {e}")
+            logger.warning(t('log.cooldown_state_save_failed', error=e))
 
     def is_cooling_down(self) -> bool:
         """
-        检查是否正在冷却中
+        Check if in cooldown period.
 
         Returns:
-            是否在冷却期
+            Whether in cooldown period
         """
         if not self.enabled:
             return False
@@ -121,7 +125,7 @@ class CooldownManager:
             return False
 
         if datetime.now() >= self.cooldown_until:
-            # 冷却结束
+            # Cooldown ended
             self.cooldown_until = None
             self.continuous_tasks = 0
             self._save_state()
@@ -131,10 +135,10 @@ class CooldownManager:
 
     def get_remaining_cooldown(self) -> Optional[timedelta]:
         """
-        获取剩余冷却时间
+        Get remaining cooldown time.
 
         Returns:
-            剩余时间，如果没有在冷却则返回 None
+            Remaining time, None if not cooling down
         """
         if not self.is_cooling_down():
             return None
@@ -143,10 +147,10 @@ class CooldownManager:
 
     def can_execute_task(self) -> bool:
         """
-        检查是否可以执行任务
+        Check if task can be executed.
 
         Returns:
-            是否可以执行
+            Whether can execute
         """
         if not self.enabled:
             return True
@@ -154,80 +158,83 @@ class CooldownManager:
         return not self.is_cooling_down()
 
     def record_task_start(self):
-        """记录任务开始"""
+        """Record task start."""
         self.last_task_time = datetime.now()
         self._save_state()
 
     def record_task_complete(self, success: bool = True):
         """
-        记录任务完成
+        Record task completion.
 
         Args:
-            success: 任务是否成功
+            success: Whether task succeeded
         """
         self.continuous_tasks += 1
         self.last_task_time = datetime.now()
 
-        # 检查是否需要自动冷却
+        # Check if auto cooldown needed
         if self.continuous_tasks >= self.max_continuous_tasks:
-            logger.info(f"连续执行 {self.continuous_tasks} 个任务，触发自动冷却")
-            self.trigger_cooldown(reason="达到最大连续任务数")
+            logger.info(t('log.max_continuous_reached', count=self.continuous_tasks))
+            self.trigger_cooldown(reason=t('log.max_continuous_reason'))
 
         self._save_state()
 
-    def trigger_cooldown(self, reason: str = "手动触发", duration_minutes: int = None):
+    def trigger_cooldown(self, reason: str = "Manual trigger", duration_minutes: int = None):
         """
-        触发冷却
+        Trigger cooldown.
 
         Args:
-            reason: 触发原因
-            duration_minutes: 冷却时长（分钟），默认使用配置值
+            reason: Trigger reason
+            duration_minutes: Cooldown duration (minutes), defaults to config value
         """
         if not self.enabled:
-            logger.info("冷却功能已禁用，跳过")
+            logger.info(t('log.cooldown_disabled_skip'))
             return
 
         duration = duration_minutes or self.duration_minutes
         self.cooldown_until = datetime.now() + timedelta(minutes=duration)
 
-        logger.warning(f"触发冷却: {reason}，冷却 {duration} 分钟，直到 {self.cooldown_until}")
+        logger.warning(t('log.cooldown_triggered',
+                        reason=reason,
+                        minutes=duration,
+                        until=self.cooldown_until))
         self._save_state()
 
     def trigger_risk_cooldown(self, risk_type: str):
         """
-        因风险触发冷却
+        Trigger cooldown due to risk.
 
         Args:
-            risk_type: 风险类型
+            risk_type: Risk type
         """
         if not self.trigger_on_risk:
-            logger.info("风险触发冷却已禁用")
+            logger.info(t('log.risk_cooldown_disabled'))
             return
 
-        # 根据风险类型调整冷却时长
+        # Adjust cooldown duration based on risk type
         duration_map = {
-            'blocked': self.duration_minutes * 2,  # 封禁加倍冷却
+            'blocked': self.duration_minutes * 2,  # Double cooldown for block
             'captcha': self.duration_minutes,
             'rate_limit': self.duration_minutes,
             'login_required': self.duration_minutes // 2,
         }
 
         duration = duration_map.get(risk_type, self.duration_minutes)
-        self.trigger_cooldown(reason=f"检测到风险: {risk_type}", duration_minutes=duration)
+        self.trigger_cooldown(reason=t('log.risk_detected_cooldown', risk_type=risk_type), duration_minutes=duration)
 
     def reset(self):
-        """重置冷却状态"""
+        """Reset cooldown state."""
         self.continuous_tasks = 0
         self.cooldown_until = None
         self._save_state()
-        logger.info("冷却状态已重置")
+        logger.info(t('log.cooldown_state_reset'))
 
     def wait_for_cooldown(self) -> bool:
         """
-        等待冷却结束
+        Wait for cooldown to end.
 
         Returns:
-            是否成功等待（如果没有在冷却则立即返回 True）
+            Whether successfully waited (returns True immediately if not cooling down)
         """
         remaining = self.get_remaining_cooldown()
         if remaining is None:
@@ -237,7 +244,7 @@ class CooldownManager:
         if seconds <= 0:
             return True
 
-        logger.info(f"等待冷却结束，剩余 {int(seconds)} 秒...")
+        logger.info(t('log.waiting_cooldown_end', seconds=int(seconds)))
 
         try:
             time.sleep(seconds)
@@ -246,15 +253,15 @@ class CooldownManager:
             self._save_state()
             return True
         except KeyboardInterrupt:
-            logger.warning("用户中断等待")
+            logger.warning(t('log.user_interrupted_wait'))
             return False
 
     def get_status(self) -> dict:
         """
-        获取当前状态
+        Get current status.
 
         Returns:
-            状态字典
+            Status dictionary
         """
         remaining = self.get_remaining_cooldown()
         return {

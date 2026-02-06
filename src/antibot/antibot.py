@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-AntiBot 主模块
-整合人类行为模拟、风险检测、冷却管理
+AntiBot Main Module
+Integrates human behavior simulation, risk detection, and cooldown management.
 """
 
 import json
@@ -9,6 +9,7 @@ import logging
 from pathlib import Path
 from typing import Optional, List, Callable
 
+from locales import t
 from .human_simulator import HumanSimulator
 from .risk_detector import RiskDetector, RiskSignal, RiskType
 from .cooldown import CooldownManager
@@ -18,98 +19,100 @@ logger = logging.getLogger(__name__)
 
 class AntiBot:
     """
-    AntiBot 防风控管理器
+    AntiBot Risk Control Manager
 
-    核心功能：
-    - 统一管理人类行为模拟
-    - 统一管理风险检测
-    - 统一管理冷却机制
-    - 提供便捷的装饰器和上下文管理器
+    Core features:
+    - Unified human behavior simulation management
+    - Unified risk detection management
+    - Unified cooldown mechanism management
+    - Convenient decorators and context managers
     """
 
     def __init__(self, config_path: str = None):
         """
-        初始化 AntiBot
+        Initialize AntiBot.
 
         Args:
-            config_path: 配置文件路径，默认使用 config/antibot.json
+            config_path: Config file path, defaults to config/antibot.json
         """
         self.config = self._load_config(config_path)
 
-        # 初始化子模块
+        # Initialize submodules
         self.human = HumanSimulator(self.config.get('human_behavior', {}))
         self.detector = RiskDetector(self.config.get('risk_detection', {}))
         self.cooldown = CooldownManager(self.config.get('cooldown', {}))
 
-        # 风险回调
+        # Risk callbacks
         self._risk_callbacks: List[Callable[[RiskSignal], None]] = []
 
     def _load_config(self, config_path: str = None) -> dict:
-        """加载配置文件"""
+        """Load configuration file."""
         if config_path:
             path = Path(config_path)
         else:
             path = Path(__file__).parent.parent.parent / 'config' / 'antibot.json'
 
         if not path.exists():
-            logger.warning(f"配置文件不存在: {path}，使用默认配置")
+            logger.warning(t('log.antibot_config_not_found', path=path))
             return {}
 
         try:
             with open(path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
-            logger.info(f"加载 AntiBot 配置: {path}")
+            logger.info(t('log.antibot_config_loaded', path=path))
             return config
         except Exception as e:
-            logger.error(f"加载配置失败: {e}")
+            logger.error(t('log.antibot_config_load_failed', error=e))
             return {}
 
-    # ==================== 人类行为模拟 ====================
+    # ==================== Human Behavior Simulation ====================
 
     def sleep(self, min_ms: int = None, max_ms: int = None) -> float:
-        """随机延迟"""
+        """Random delay."""
         return self.human.random_sleep(min_ms, max_ms)
 
     def sleep_after_click(self) -> float:
-        """点击后随机延迟"""
+        """Random delay after click."""
         return self.human.sleep_after_click()
 
     def random_offset(self, x: int, y: int, max_offset: int = 10):
-        """给坐标添加随机偏移"""
+        """Add random offset to coordinates."""
         return self.human.apply_offset_to_point(x, y, max_offset)
 
     def maybe_random_action(self, adb_controller) -> bool:
-        """可能执行随机浏览动作"""
+        """Possibly execute random browsing action."""
         return self.human.execute_random_action(adb_controller)
 
-    # ==================== 风险检测 ====================
+    # ==================== Risk Detection ====================
 
     def check_risk(self, ui_root) -> List[RiskSignal]:
         """
-        检测当前页面风险
+        Detect risks on current page.
 
         Args:
-            ui_root: UI 层级树根节点
+            ui_root: UI hierarchy tree root node
 
         Returns:
-            风险信号列表
+            List of risk signals
         """
         signals = self.detector.detect_from_ui_tree(ui_root)
 
-        # 处理高风险信号
+        # Handle high risk signals
         for signal in signals:
             if signal.confidence >= 0.6:
-                logger.warning(f"检测到风险: {signal.risk_type.value} "
-                             f"(置信度: {signal.confidence:.2f}) - {signal.details}")
+                logger.warning(t('log.risk_detected_detail',
+                              risk_type=signal.risk_type.value,
+                              confidence=signal.confidence,
+                              details=signal.details))
 
-                # 触发回调
+                # Trigger callbacks
                 for callback in self._risk_callbacks:
                     try:
                         callback(signal)
                     except Exception as e:
-                        logger.error(f"风险回调执行失败: {e}")
+                        logger.error(t('log.risk_callback_failed', error=e))
 
-                # 根据风险类型触发冷却
+                # Trigger cooldown based on risk type
                 if signal.risk_type in [RiskType.BLOCKED, RiskType.RATE_LIMIT]:
                     self.cooldown.trigger_risk_cooldown(signal.risk_type.value)
 
@@ -117,104 +120,104 @@ class AntiBot:
 
     def is_safe(self, ui_root, threshold: float = 0.6) -> bool:
         """
-        检查当前页面是否安全
+        Check if current page is safe.
 
         Args:
-            ui_root: UI 层级树根节点
-            threshold: 风险阈值
+            ui_root: UI hierarchy tree root node
+            threshold: Risk threshold
 
         Returns:
-            是否安全
+            Whether safe
         """
         signals = self.check_risk(ui_root)
         return self.detector.is_safe(signals, threshold)
 
     def detect_captcha(self, ui_root) -> Optional[str]:
         """
-        检测验证码类型
+        Detect captcha type.
 
         Args:
-            ui_root: UI 层级树根节点
+            ui_root: UI hierarchy tree root node
 
         Returns:
-            验证码类型或 None
+            Captcha type or None
         """
         return self.detector.detect_captcha_type(ui_root)
 
     def on_risk(self, callback: Callable[[RiskSignal], None]):
         """
-        注册风险回调
+        Register risk callback.
 
         Args:
-            callback: 回调函数，接收 RiskSignal 参数
+            callback: Callback function, accepts RiskSignal parameter
         """
         self._risk_callbacks.append(callback)
 
-    # ==================== 冷却管理 ====================
+    # ==================== Cooldown Management ====================
 
     def can_proceed(self) -> bool:
-        """检查是否可以继续执行"""
+        """Check if execution can proceed."""
         return self.cooldown.can_execute_task()
 
     def wait_if_cooling(self) -> bool:
-        """如果在冷却中则等待"""
+        """Wait if in cooldown period."""
         return self.cooldown.wait_for_cooldown()
 
     def record_task_done(self, success: bool = True):
-        """记录任务完成"""
+        """Record task completion."""
         self.cooldown.record_task_complete(success)
 
-    def trigger_pause(self, reason: str = "手动暂停", minutes: int = None):
-        """触发暂停/冷却"""
+    def trigger_pause(self, reason: str = "Manual pause", minutes: int = None):
+        """Trigger pause/cooldown."""
         self.cooldown.trigger_cooldown(reason, minutes)
 
     def get_cooldown_status(self) -> dict:
-        """获取冷却状态"""
+        """Get cooldown status."""
         return self.cooldown.get_status()
 
-    # ==================== 便捷方法 ====================
+    # ==================== Convenience Methods ====================
 
     def safe_click(self, adb_controller, x: int, y: int) -> bool:
         """
-        安全点击（带随机偏移和延迟）
+        Safe click (with random offset and delay).
 
         Args:
-            adb_controller: ADBController 实例
-            x: 目标 x 坐标
-            y: 目标 y 坐标
+            adb_controller: ADBController instance
+            x: Target x coordinate
+            y: Target y coordinate
 
         Returns:
-            是否成功
+            Whether successful
         """
-        # 添加随机偏移
+        # Add random offset
         new_x, new_y = self.random_offset(x, y)
 
-        # 执行点击
+        # Execute click
         result = adb_controller.tap(new_x, new_y)
 
-        # 点击后延迟
+        # Delay after click
         self.sleep_after_click()
 
         return result
 
     def safe_input(self, adb_controller, text: str) -> bool:
         """
-        安全输入文本（带人类化延迟）
+        Safe text input (with human-like delay).
 
         Args:
-            adb_controller: ADBController 实例
-            text: 要输入的文本
+            adb_controller: ADBController instance
+            text: Text to input
 
         Returns:
-            是否成功
+            Whether successful
         """
-        # 输入前短暂延迟
+        # Brief delay before input
         self.sleep(300, 800)
 
-        # 执行输入
+        # Execute input
         result = adb_controller.input_text(text)
 
-        # 输入后延迟
+        # Delay after input
         delay = self.human.humanize_typing_delay(text)
         import time
         time.sleep(delay)
@@ -227,14 +230,14 @@ class AntiBot:
         direction: str = 'up'
     ) -> bool:
         """
-        安全滚动（带随机参数）
+        Safe scroll (with random parameters).
 
         Args:
-            adb_controller: ADBController 实例
-            direction: 滚动方向
+            adb_controller: ADBController instance
+            direction: Scroll direction
 
         Returns:
-            是否成功
+            Whether successful
         """
         screen_size = adb_controller.get_screen_size()
         if not screen_size:
@@ -251,29 +254,29 @@ class AntiBot:
 
     def pre_action_check(self, ui_locator) -> bool:
         """
-        操作前检查
+        Pre-action check.
 
-        适合在每个关键操作前调用，检查风险和冷却状态。
+        Suitable for calling before each critical operation to check risk and cooldown status.
 
         Args:
-            ui_locator: UILocator 实例
+            ui_locator: UILocator instance
 
         Returns:
-            是否可以继续
+            Whether can proceed
         """
-        # 检查冷却
+        # Check cooldown
         if not self.can_proceed():
             remaining = self.cooldown.get_remaining_cooldown()
-            logger.warning(f"正在冷却中，剩余 {remaining}")
+            logger.warning(t('log.in_cooldown_remaining', remaining=remaining))
             return False
 
-        # 检查风险
+        # Check risk
         root = ui_locator.dump_and_parse()
         if root and not self.is_safe(root):
-            logger.warning("检测到风险，建议暂停")
+            logger.warning(t('log.risk_detected_suggest_pause'))
             return False
 
-        # 可能执行随机动作
+        # Possibly execute random action
         # self.maybe_random_action(ui_locator.adb)
 
         return True

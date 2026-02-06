@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Android 自动取证主流程
-支持多平台的通用取证框架
+Android Automated Forensic Main Process
+Universal forensic framework supporting multiple platforms.
 """
 
 import sys
@@ -10,11 +10,14 @@ import logging
 import argparse
 from pathlib import Path
 
-# 确保 logs 目录存在
+# Ensure logs directory exists
 log_dir = Path(__file__).parent.parent / 'logs'
 log_dir.mkdir(exist_ok=True)
 
-# 导入自定义模块
+# Import i18n module first
+from locales import t, set_language
+
+# Import custom modules
 try:
     from core.adb_controller import ADBController
     from core.recorder import ScreenRecorder
@@ -23,9 +26,9 @@ try:
     from antibot import AntiBot, TaobaoAntiBot
     from task import TaskManager, Task, TaskResult
 except ImportError as e:
-    print(f"导入模块失败: {e}")
-    print("尝试使用兼容模式...")
-    # 兼容旧方式
+    print(f"Module import failed: {e}")
+    print("Trying compatibility mode...")
+    # Compatibility with old approach
     from adb_controller import ADBController
     from recorder import ScreenRecorder
     from ui_locator import UILocator
@@ -47,183 +50,183 @@ logger = logging.getLogger(__name__)
 
 class EvidenceCollector:
     """
-    取证流程管理器
+    Evidence Collection Manager
 
-    负责公共流程（环境检查、录屏、时间锚点），
-    平台特定流程委托给 PlatformHandler 处理。
+    Responsible for common processes (environment check, screen recording, time anchor),
+    platform-specific processes are delegated to PlatformHandler.
     """
 
     def __init__(self, device_id: str = None, enable_antibot: bool = True):
         """
-        初始化取证管理器
+        Initialize evidence collector.
 
         Args:
-            device_id: 设备 ID（可选）
-            enable_antibot: 是否启用防风控功能
+            device_id: Device ID (optional)
+            enable_antibot: Whether to enable anti-detection features
         """
         self.adb = ADBController(device_id)
         self.recorder = ScreenRecorder(self.adb)
         self.locator = UILocator(self.adb)
 
-        # AntiBot 防风控
+        # AntiBot anti-detection
         self.antibot = None
         if enable_antibot and AntiBot:
             try:
                 self.antibot = AntiBot()
-                logger.info("✓ AntiBot 防风控模块已启用")
+                logger.info(t('log.antibot_module_enabled'))
             except Exception as e:
-                logger.warning(f"AntiBot 初始化失败: {e}")
+                logger.warning(t('log.antibot_init_failed', error=e))
 
-        # 平台路由器
+        # Platform router
         if PlatformRouter:
             self.router = PlatformRouter(self.adb, self.locator, self.antibot)
         else:
             self.router = None
 
-        # 实时保悬浮截屏按钮位置缓存
+        # Shishibao floating screenshot button position cache
         self._screenshot_button_pos = None
 
-    # ==================== 截屏功能 ====================
+    # ==================== Screenshot Feature ====================
 
     def click_screenshot_button(self) -> bool:
         """
-        点击实时保悬浮截屏按钮
+        Click Shishibao floating screenshot button.
 
-        首次调用时获取并缓存按钮位置，后续直接使用缓存坐标。
+        First call gets and caches button position, subsequent calls use cached coordinates.
 
         Returns:
-            是否成功点击
+            Whether click was successful
         """
         try:
-            # 首次调用时获取按钮位置
+            # Get button position on first call
             if self._screenshot_button_pos is None:
                 pos = self.adb.get_overlay_button_position()
                 if not pos:
-                    logger.warning("未找到实时保悬浮按钮，跳过截屏")
+                    logger.warning(t('log.screenshot_button_not_found'))
                     return False
                 self._screenshot_button_pos = pos
-                logger.info(f"已缓存悬浮按钮位置: {pos}")
+                logger.info(t('log.screenshot_button_cached', pos=pos))
 
-            # 点击悬浮按钮
+            # Click floating button
             x, y = self._screenshot_button_pos
-            logger.info(f"点击实时保截屏按钮: ({x}, {y})")
+            logger.info(t('log.click_screenshot_button', x=x, y=y))
             if self.adb.tap(x, y):
-                logger.info("✓ 截屏按钮已点击")
-                time.sleep(1)  # 等待截屏完成
+                logger.info(t('log.screenshot_button_clicked'))
+                time.sleep(1)  # Wait for screenshot to complete
                 return True
             else:
-                logger.warning("点击截屏按钮失败")
+                logger.warning(t('log.click_screenshot_failed'))
                 return False
 
         except Exception as e:
-            logger.error(f"点击截屏按钮异常: {e}")
+            logger.error(t('log.click_screenshot_exception', error=e))
             return False
 
-    # ==================== 公共流程 ====================
+    # ==================== Common Processes ====================
 
     def stage_1_check_environment(self) -> bool:
-        """阶段 1: 环境检查与连接验证"""
+        """Stage 1: Environment check and connection verification"""
         logger.info("=" * 60)
-        logger.info("阶段 1: 环境检查与连接验证")
+        logger.info(t('log.stage_env_check'))
         logger.info("=" * 60)
 
         if not self.adb.device_id:
-            logger.error("✗ 未检测到设备，请连接设备后重试")
+            logger.error(t('log.device_not_connected'))
             return False
-        logger.info(f"✓ 设备已连接: {self.adb.device_id}")
+        logger.info(t('log.device_connected', device_id=self.adb.device_id))
 
         screen_size = self.adb.get_screen_size()
         if not screen_size:
-            logger.error("✗ 无法获取屏幕分辨率")
+            logger.error(t('log.cannot_get_screen_resolution'))
             return False
-        logger.info(f"✓ 屏幕分辨率: {screen_size[0]}x{screen_size[1]}")
+        logger.info(t('log.screen_resolution_info', width=screen_size[0], height=screen_size[1]))
 
         if not self.adb.check_connection():
-            logger.error("✗ 设备连接异常")
+            logger.error(t('log.device_connection_abnormal'))
             return False
-        logger.info("✓ 设备连接正常")
+        logger.info(t('log.device_connection_normal'))
 
         self.adb.wake_screen()
-        logger.info("✓ 屏幕已唤醒")
+        logger.info(t('log.screen_awakened'))
 
-        # 检查冷却状态
+        # Check cooldown status
         if self.antibot and not self.antibot.can_proceed():
             status = self.antibot.get_cooldown_status()
             remaining = status.get('remaining_seconds', 0)
-            logger.warning(f"⚠ 当前处于冷却期，剩余 {int(remaining)} 秒")
-            logger.info("可使用 --no-antibot 参数跳过冷却检查")
+            logger.warning(t('log.in_cooldown_period', seconds=int(remaining)))
+            logger.info(t('log.use_no_antibot_to_skip'))
             return False
 
         return True
 
     def stage_2_start_recording(self) -> bool:
-        """阶段 2: 启动实时保App录屏"""
+        """Stage 2: Start Shishibao App recording"""
         logger.info("=" * 60)
-        logger.info("阶段 2: 启动实时保App录屏")
+        logger.info(t('log.stage_start_recording'))
         logger.info("=" * 60)
 
-        logger.info("启用触摸可视化...")
+        logger.info(t('log.enabling_touch_visualization'))
         self.adb.enable_visual_feedback()
         time.sleep(1)
 
         if not self.recorder.start_recording():
-            logger.error("✗ 启动实时保录屏失败")
+            logger.error(t('log.start_recording_failed'))
             return False
 
-        logger.info("✓ 实时保录屏已启动")
+        logger.info(t('log.recording_started'))
         return True
 
     def stage_3_show_beijing_time(self) -> bool:
-        """阶段 3: 打开北京时间作为时间锚点"""
+        """Stage 3: Open Beijing time as time anchor"""
         logger.info("=" * 60)
-        logger.info("阶段 3: 打开北京时间作为时间锚点")
+        logger.info(t('log.stage_show_beijing_time'))
         logger.info("=" * 60)
 
         try:
             url = "https://www.beijing-time.org/"
-            logger.info(f"打开北京时间: {url}")
+            logger.info(t('log.opening_beijing_time', url=url))
 
             if not self.adb.open_url(url):
-                logger.error("✗ 无法打开北京时间网站")
+                logger.error(t('log.cannot_open_beijing_time'))
                 return False
 
-            logger.info("等待5秒让页面加载...")
+            logger.info(t('log.waiting_page_load', seconds=5))
             time.sleep(5)
 
-            # 截屏1：北京时间页面
-            logger.info("截屏1：北京时间页面")
+            # Screenshot 1: Beijing time page
+            logger.info(t('log.screenshot_beijing_time'))
             self.click_screenshot_button()
 
-            logger.info("停留5秒展示北京时间...")
+            logger.info(t('log.staying_beijing_time', seconds=5))
             time.sleep(5)
 
-            logger.info("✓ 北京时间展示完成")
+            logger.info(t('log.beijing_time_complete'))
             return True
 
         except Exception as e:
-            logger.error(f"展示北京时间失败: {e}")
+            logger.error(t('log.show_beijing_time_failed', error=e))
             return False
 
     def stage_9_export_evidence(self) -> bool:
-        """阶段 9: 停止实时保录屏并保存"""
+        """Stage 9: Stop Shishibao recording and save"""
         logger.info("=" * 60)
-        logger.info("阶段 9: 停止实时保录屏并保存")
+        logger.info(t('log.stage_export_evidence'))
         logger.info("=" * 60)
 
         if not self.recorder.stop_recording():
-            logger.error("✗ 停止实时保录屏失败")
+            logger.error(t('log.stop_recording_failed'))
             return False
 
-        logger.info("✓ 实时保录屏已停止并保存")
+        logger.info(t('log.recording_stopped_saved'))
         self.adb.disable_visual_feedback()
 
-        # 记录任务完成
+        # Record task completion
         if self.antibot:
             self.antibot.record_task_done(success=True)
 
         return True
 
-    # ==================== 主流程 ====================
+    # ==================== Main Process ====================
 
     def run_full_process(
         self,
@@ -231,56 +234,56 @@ class EvidenceCollector:
         video_play_duration: int = 30
     ) -> tuple:
         """
-        执行完整取证流程
+        Execute full forensic process.
 
         Args:
-            product_url: 商品链接（支持淘宝/天猫/京东/抖音等）
-            video_play_duration: 视频录制时长（秒）
+            product_url: Product link (supports Taobao/Tmall/JD/Douyin etc.)
+            video_play_duration: Video recording duration (seconds)
 
         Returns:
-            (success: bool, error: str or None) - 是否成功，失败时返回错误原因
+            (success: bool, error: str or None) - Whether successful, error reason on failure
         """
         logger.info("*" * 60)
-        logger.info("开始执行 Android 自动取证流程")
-        logger.info(f"商品链接: {product_url}")
+        logger.info(t('log.start_full_process'))
+        logger.info(t('log.product_link', url=product_url))
         logger.info("*" * 60)
 
-        recording_started = False  # 标记录屏是否已启动
+        recording_started = False  # Flag whether recording has started
 
         try:
-            # 阶段 1: 环境检查
+            # Stage 1: Environment check
             if not self.stage_1_check_environment():
-                error = "环境检查失败"
-                logger.error(f"{error}，终止流程")
+                error = t('log.env_check_failed')
+                logger.error(error)
                 return False, error
 
-            # 阶段 2: 启动实时保录屏
+            # Stage 2: Start Shishibao recording
             if not self.stage_2_start_recording():
-                error = "启动实时保录屏失败"
-                logger.error(f"{error}，终止流程")
+                error = t('log.start_recording_failed_terminate')
+                logger.error(error)
                 return False, error
             recording_started = True
 
-            # 阶段 3: 展示北京时间
+            # Stage 3: Display Beijing time
             if not self.stage_3_show_beijing_time():
-                error = "展示北京时间失败"
-                logger.error(f"{error}，终止流程")
+                error = t('log.show_beijing_time_failed_terminate')
+                logger.error(error)
                 self._cleanup_on_failure(recording_started)
                 return False, error
 
-            # 阶段 4-8: 平台特定流程
+            # Stage 4-8: Platform-specific process
             if self.router:
-                # 使用平台路由器
+                # Use platform router
                 try:
                     handler = self.router.get_handler(product_url)
-                    logger.info(f"使用 {handler.get_platform_display_name()} 平台处理器")
+                    logger.info(t('log.using_platform_handler', platform=handler.get_platform_display_name()))
 
-                    # 设置截屏回调
+                    # Set screenshot callback
                     handler.set_screenshot_callback(self.click_screenshot_button)
 
                     success, platform_error = handler.execute(product_url, video_play_duration)
                     if not success:
-                        error = platform_error or "平台取证流程失败"
+                        error = platform_error or t('log.platform_forensic_failed')
                         logger.error(error)
                         if self.antibot:
                             self.antibot.record_task_done(success=False)
@@ -288,42 +291,42 @@ class EvidenceCollector:
                         return False, error
 
                 except NotImplementedError as e:
-                    error = f"平台未实现: {e}"
+                    error = t('log.platform_not_implemented', error=e)
                     logger.error(error)
                     self._cleanup_on_failure(recording_started)
                     return False, error
 
                 except ValueError as e:
-                    error = f"无法识别平台: {e}"
+                    error = t('log.platform_not_recognized', error=e)
                     logger.error(error)
                     self._cleanup_on_failure(recording_started)
                     return False, error
             else:
-                # 兼容模式：直接使用旧的淘宝流程
-                logger.warning("平台路由器不可用，使用兼容模式")
+                # Compatibility mode: use old Taobao process directly
+                logger.warning(t('log.platform_router_unavailable'))
                 success, legacy_error = self._run_legacy_taobao_process(product_url, video_play_duration)
                 if not success:
                     self._cleanup_on_failure(recording_started)
                     return False, legacy_error
 
-            # 阶段 9: 停止并导出（成功时保存）
+            # Stage 9: Stop and export (save on success)
             if not self.stage_9_export_evidence():
-                error = "导出取证文件失败"
+                error = t('log.export_evidence_failed')
                 logger.error(error)
                 return False, error
 
             logger.info("*" * 60)
-            logger.info("✓ 取证流程全部完成")
+            logger.info(t('log.forensic_complete'))
             logger.info("*" * 60)
             return True, None
 
         except KeyboardInterrupt:
-            logger.warning("用户中断，尝试保存录屏...")
+            logger.warning(t('log.user_interrupted'))
             self.recorder.stop_recording()
-            return False, "用户中断"
+            return False, "User interrupted"
 
         except Exception as e:
-            error = f"取证流程异常: {e}"
+            error = t('log.forensic_exception', error=e)
             logger.error(error, exc_info=True)
             if self.antibot:
                 self.antibot.record_task_done(success=False)
@@ -332,17 +335,17 @@ class EvidenceCollector:
 
     def _cleanup_on_failure(self, recording_started: bool):
         """
-        任务失败时清理录屏状态
+        Cleanup recording state on task failure.
 
         Args:
-            recording_started: 录屏是否已启动
+            recording_started: Whether recording has started
         """
         if recording_started:
-            logger.info("任务失败，取消录屏（不保存）...")
+            logger.info(t('log.task_failed_cancel_recording'))
             try:
                 self.recorder.cancel_recording()
             except Exception as e:
-                logger.error(f"取消录屏失败: {e}")
+                logger.error(t('log.cancel_recording_failed', error=e))
 
     def _run_legacy_taobao_process(
         self,
@@ -350,55 +353,55 @@ class EvidenceCollector:
         video_play_duration: int
     ) -> tuple:
         """
-        兼容模式：旧的淘宝流程（当 PlatformRouter 不可用时）
+        Compatibility mode: old Taobao process (when PlatformRouter unavailable).
 
-        这是从原 main.py 保留的逻辑，用于向后兼容。
-        新代码应该使用 PlatformRouter。
+        This is logic preserved from original main.py for backward compatibility.
+        New code should use PlatformRouter.
 
         Returns:
             (success: bool, error: str or None)
         """
-        logger.warning("使用旧版淘宝流程（兼容模式）")
+        logger.warning(t('log.using_legacy_taobao'))
 
-        # 阶段 4: 打开应用商店
+        # Stage 4: Open app store
         if not self.adb.open_app_store_and_search_taobao():
-            error = "打开应用商店失败"
+            error = "Failed to open app store"
             logger.error(error)
             return False, error
         time.sleep(6)
 
-        # 阶段 5: 从应用商店打开淘宝
+        # Stage 5: Open Taobao from app store
         if not self.locator.find_and_click_app_store_open_button(max_attempts=3):
-            error = "未能点击'打开'按钮"
+            error = "Failed to click 'Open' button"
             logger.error(error)
             return False, error
         time.sleep(10)
 
-        # 阶段 6: 在淘宝中打开商品
+        # Stage 6: Open product in Taobao
         time.sleep(3)
         self.adb.press_back()
         time.sleep(1)
 
         root = self.locator.dump_and_parse()
         if not root:
-            error = "无法获取 UI 层级"
+            error = t('log.cannot_get_ui_hierarchy')
             logger.error(error)
             return False, error
 
         search_box = self.locator.find_taobao_search_box(root)
         if not search_box:
-            error = "未找到淘宝搜索框"
+            error = "Taobao search box not found"
             logger.error(error)
             return False, error
 
         if not self.locator.click_element(search_box):
-            error = "点击搜索框失败"
+            error = "Failed to click search box"
             logger.error(error)
             return False, error
         time.sleep(1)
 
         if not self.adb.input_text(product_url):
-            error = "输入商品链接失败"
+            error = "Failed to input product link"
             logger.error(error)
             return False, error
         time.sleep(1)
@@ -406,14 +409,14 @@ class EvidenceCollector:
         self.adb.press_enter()
         time.sleep(8)
 
-        # 阶段 7: 播放视频
+        # Stage 7: Play video
         self.locator.find_and_click_video(max_attempts=3)
         time.sleep(3)
 
-        # 阶段 8: 持续录制
+        # Stage 8: Continue recording
         time.sleep(video_play_duration)
 
-        # 阶段 8.5: 查看店铺资质（简化版）
+        # Stage 8.5: View shop qualification (simplified)
         root = self.locator.dump_and_parse()
         if root:
             shop_btn = self.locator.find_shop_button(root)
@@ -425,7 +428,7 @@ class EvidenceCollector:
 
 
 def _load_taobao_antibot_config() -> dict:
-    """加载淘宝防封控配置"""
+    """Load Taobao anti-detection config"""
     config_path = Path(__file__).parent.parent / 'config' / 'antibot.json'
     if config_path.exists():
         try:
@@ -434,38 +437,38 @@ def _load_taobao_antibot_config() -> dict:
                 config = json.load(f)
             return config.get('taobao', {})
         except Exception as e:
-            logger.warning(f"加载淘宝防封控配置失败: {e}")
+            logger.warning(t('log.taobao_antibot_init_failed', error=e))
     return {}
 
 
 def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 30, enable_antibot: bool = True):
     """
-    批量模式：从文件加载任务并依次执行
+    Batch mode: Load tasks from file and execute sequentially.
 
-    支持淘宝专用防封控策略：
-    - 每 3-5 个任务执行人类浏览模拟
-    - 每 3-5 个周期进入 15 分钟冷却期
+    Supports Taobao-specific anti-detection strategy:
+    - Execute human browsing simulation every 3-5 tasks
+    - Enter 15-minute cooldown after 3-5 cycles
 
     Args:
-        task_file: 任务文件路径（JSON/CSV/TXT）
-        device_id: 设备 ID
-        video_duration: 视频录制时长
-        enable_antibot: 是否启用防封控
+        task_file: Task file path (JSON/CSV/TXT)
+        device_id: Device ID
+        video_duration: Video recording duration
+        enable_antibot: Whether to enable anti-detection
     """
     if not TaskManager:
-        logger.error("TaskManager 模块不可用，无法使用批量模式")
+        logger.error(t('log.task_manager_unavailable'))
         return False
 
     logger.info("=" * 60)
-    logger.info("批量取证模式")
-    logger.info(f"任务文件: {task_file}")
+    logger.info(t('log.batch_mode'))
+    logger.info(t('log.task_file', file=task_file))
     logger.info("=" * 60)
 
-    # 初始化
+    # Initialize
     collector = EvidenceCollector(device_id=device_id, enable_antibot=enable_antibot)
     task_manager = TaskManager()
 
-    # 初始化淘宝防封控（如果启用）
+    # Initialize Taobao anti-detection (if enabled)
     taobao_antibot = None
     if enable_antibot and TaobaoAntiBot:
         try:
@@ -476,189 +479,207 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
                 config=taobao_config,
                 device_id=collector.adb.device_id
             )
-            logger.info("✓ 淘宝防封控模块已启用")
+            logger.info(t('log.taobao_antibot_enabled'))
             status = taobao_antibot.get_status()
-            logger.info(f"  当前状态: 周期内任务 {status['tasks_in_cycle']}/{status['tasks_per_cycle_target']}, "
-                       f"已完成周期 {status['completed_cycles']}/{status['cycles_before_cooldown_target']}")
+            logger.info(t('log.antibot_status', current=status['tasks_in_cycle'],
+                         target=status['tasks_per_cycle_target'],
+                         cycles=status['completed_cycles'],
+                         cycles_target=status['cycles_before_cooldown_target']))
 
-            # 检查是否在冷却期
+            # Check if in cooldown period
             if taobao_antibot.is_cooling_down():
                 remaining = taobao_antibot.get_remaining_cooldown()
-                logger.warning(f"⚠ 当前设备处于冷却期，剩余 {int(remaining.total_seconds())} 秒")
-                logger.info("等待冷却期结束...")
+                logger.warning(t('log.device_in_cooldown', seconds=int(remaining.total_seconds())))
+                logger.info(t('log.waiting_cooldown'))
                 time.sleep(remaining.total_seconds())
-                logger.info("✓ 冷却期已结束，继续执行")
+                logger.info(t('log.cooldown_ended'))
 
         except Exception as e:
-            logger.warning(f"淘宝防封控初始化失败: {e}")
+            logger.warning(t('log.taobao_antibot_init_failed', error=e))
             taobao_antibot = None
 
-    # 加载任务
+    # Load tasks
     count = task_manager.load_tasks_from_file(task_file)
     if count == 0:
-        logger.error("未加载到任何任务")
+        logger.error(t('log.no_tasks_loaded'))
         return False
 
-    logger.info(f"加载了 {count} 个任务")
+    logger.info(t('log.tasks_loaded', count=count))
 
-    # 设置执行器
+    # Set executor
     def execute_task(task: Task) -> TaskResult:
-        """任务执行函数"""
-        logger.info(f"执行任务: {task.id} - {task.product_url[:50]}...")
+        """Task execution function"""
+        logger.info(t('log.executing_task', id=task.id, url=task.product_url[:50]))
 
-        # 检查冷却状态
+        # Check cooldown status
         if taobao_antibot and taobao_antibot.is_cooling_down():
             remaining = taobao_antibot.get_remaining_cooldown()
-            logger.warning(f"当前处于冷却期，剩余 {int(remaining.total_seconds())} 秒")
-            logger.info("等待冷却期结束...")
+            logger.warning(t('log.in_cooldown_waiting', seconds=int(remaining.total_seconds())))
+            logger.info(t('log.waiting_cooldown'))
             time.sleep(remaining.total_seconds())
-            logger.info("✓ 冷却期已结束")
+            logger.info(t('log.cooldown_ended'))
 
         success, error = collector.run_full_process(
             product_url=task.product_url,
             video_play_duration=task.video_duration or video_duration
         )
 
-        # 记录任务完成并检查是否需要防封控动作（无论成功失败都计数）
+        # Record task completion and check if anti-detection action needed (count regardless of success/failure)
         try:
             if taobao_antibot:
-                # 检测是否是淘宝链接
+                # Detect if Taobao link
                 is_taobao = 'taobao' in task.product_url.lower() or 'tmall' in task.product_url.lower() or 'tb.cn' in task.product_url.lower()
-                logger.info(f"防封控检查: is_taobao={is_taobao}, url={task.product_url[:50]}")
+                logger.info(t('log.antibot_check', is_taobao=is_taobao, url=task.product_url[:50]))
                 if is_taobao:
                     should_browse, should_cooldown = taobao_antibot.record_task_complete()
                     status = taobao_antibot.get_status()
-                    logger.info(f"防封控状态: 周期内任务={status['tasks_in_cycle']}/{status['tasks_per_cycle_target']}, "
-                               f"已完成周期={status['completed_cycles']}/{status['cycles_before_cooldown_target']}, "
-                               f"should_browse={should_browse}, should_cooldown={should_cooldown}")
+                    logger.info(t('log.antibot_status_detail',
+                                 current=status['tasks_in_cycle'],
+                                 target=status['tasks_per_cycle_target'],
+                                 cycles=status['completed_cycles'],
+                                 cycles_target=status['cycles_before_cooldown_target'],
+                                 browse=should_browse, cooldown=should_cooldown))
 
                     if should_browse:
                         logger.info("=" * 60)
-                        logger.info("触发周期结束动作：模拟人类浏览")
+                        logger.info(t('log.trigger_cycle_end'))
                         logger.info("=" * 60)
                         taobao_antibot.execute_cycle_end_actions()
 
                     if should_cooldown:
-                        taobao_antibot.trigger_cooldown("完成多个周期")
-                        # 关闭淘宝进程
+                        taobao_antibot.trigger_cooldown("Completed multiple cycles")
+                        # Close Taobao process
                         taobao_antibot.close_taobao()
             else:
-                logger.warning("防封控未启用: taobao_antibot 为 None")
+                logger.warning(t('log.antibot_not_enabled'))
         except Exception as e:
-            logger.error(f"防封控处理异常: {e}", exc_info=True)
+            logger.error(t('log.antibot_processing_exception', error=e), exc_info=True)
 
-        # 每个任务结束后关闭两个App，保证下次任务初始状态
-        logger.info("关闭淘宝和实时保进程，确保下次任务初始状态...")
+        # Close both apps after each task to ensure initial state for next task
+        logger.info(t('log.closing_apps_for_next_task'))
         collector.adb.force_stop_app("com.taobao.taobao")
         collector.adb.force_stop_app("com.a1010bao.web.rdbao")
 
         return TaskResult(
             success=success,
-            message="取证完成" if success else "取证失败",
+            message="Forensic complete" if success else "Forensic failed",
             error=error
         )
 
     task_manager.set_executor(execute_task)
 
-    # 执行所有任务
+    # Execute all tasks
     try:
         stats = task_manager.run_all(delay_between_tasks=10)
     except KeyboardInterrupt:
-        logger.warning("用户中断批量任务")
-        # 设置结束时间以便生成报告
+        logger.warning(t('log.user_interrupted_batch'))
+        # Set end time for report generation
         from datetime import datetime
         task_manager.stats['end_time'] = datetime.now().isoformat()
     finally:
-        # 无论成功、失败还是中断，都生成汇总报告
+        # Generate summary report regardless of success, failure, or interruption
         task_manager.generate_report()
 
-    # 任务全部完成后关闭淘宝
+    # Close Taobao after all tasks complete
     if taobao_antibot:
-        logger.info("所有任务完成，关闭淘宝进程")
+        logger.info(t('log.all_tasks_complete_closing'))
         taobao_antibot.close_taobao()
 
     return task_manager.stats.get('failed', 0) == 0
 
 
 def main():
-    """主函数"""
+    """Main function"""
     parser = argparse.ArgumentParser(
-        description='Android 自动取证工具',
+        description='Android Automated Forensic Tool',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-示例:
-  # 单链接取证
+Examples:
+  # Single link forensic
   python main.py "https://item.taobao.com/item.htm?id=xxx"
 
-  # 批量取证（单设备顺序执行）
+  # Batch forensic (single device sequential)
   python main.py --batch tasks.json
 
-  # 批量取证（多设备并行执行）
+  # Batch forensic (multi-device parallel)
   python main.py --batch tasks.csv --parallel
 
-  # 指定设备并行执行
+  # Specify devices for parallel execution
   python main.py --batch tasks.csv --parallel --devices "device1,device2"
 
-  # 禁用防风控（跳过冷却检查）
+  # Disable anti-detection (skip cooldown check)
   python main.py --no-antibot "https://item.taobao.com/item.htm?id=xxx"
+
+  # Set language
+  python main.py --lang zh_CN "https://item.taobao.com/item.htm?id=xxx"
         """
     )
 
-    # 互斥组：单链接模式 vs 批量模式
+    # Mutual exclusion group: single link mode vs batch mode
     mode_group = parser.add_mutually_exclusive_group(required=True)
     mode_group.add_argument(
         'product_url',
         nargs='?',
-        help='商品链接（支持淘宝/天猫/京东/抖音等）'
+        help='Product link (supports Taobao/Tmall/JD/Douyin etc.)'
     )
     mode_group.add_argument(
         '--batch', '-b',
         metavar='FILE',
-        help='批量模式：从文件加载任务（支持 JSON/CSV/TXT）'
+        help='Batch mode: load tasks from file (supports JSON/CSV/TXT)'
     )
 
     parser.add_argument(
         '-d', '--device',
-        help='设备 ID（可选，默认自动检测）',
+        help='Device ID (optional, auto-detect by default)',
         default=None
     )
     parser.add_argument(
         '-p', '--play-duration',
-        help='视频播放录制时长（秒），默认 30',
+        help='Video playback recording duration (seconds), default 30',
         type=int,
         default=30
     )
     parser.add_argument(
         '--no-antibot',
         action='store_true',
-        help='禁用防风控功能（跳过冷却检查和人类行为模拟）'
+        help='Disable anti-detection (skip cooldown check and human behavior simulation)'
     )
     parser.add_argument(
         '--parallel',
         action='store_true',
-        help='启用多设备并行模式（需配合 --batch 使用）'
+        help='Enable multi-device parallel mode (use with --batch)'
     )
     parser.add_argument(
         '--devices',
-        help='指定设备 ID 列表（逗号分隔），仅在并行模式下有效',
+        help='Specify device ID list (comma-separated), only valid in parallel mode',
         default=None
     )
     parser.add_argument(
         '--strategy',
         choices=['round_robin', 'load_balance', 'random'],
         default='round_robin',
-        help='任务分配策略（默认轮询）'
+        help='Task dispatch strategy (default: round_robin)'
+    )
+    parser.add_argument(
+        '--lang',
+        choices=['en_US', 'zh_CN'],
+        default=None,
+        help='Language setting (default: auto-detect from environment)'
     )
 
     args = parser.parse_args()
 
-    # 批量模式
+    # Set language if specified
+    if args.lang:
+        set_language(args.lang)
+
+    # Batch mode
     if args.batch:
-        # 并行模式
+        # Parallel mode
         if args.parallel:
             from core.parallel_executor import run_parallel_mode
 
-            # 解析设备列表
+            # Parse device list
             device_ids = None
             if args.devices:
                 device_ids = [d.strip() for d in args.devices.split(',')]
@@ -672,7 +693,7 @@ def main():
             )
             sys.exit(0 if success else 1)
 
-        # 单设备顺序模式
+        # Single device sequential mode
         success = run_batch_mode(
             task_file=args.batch,
             device_id=args.device,
@@ -681,7 +702,7 @@ def main():
         )
         sys.exit(0 if success else 1)
 
-    # 单链接模式
+    # Single link mode
     collector = EvidenceCollector(
         device_id=args.device,
         enable_antibot=not args.no_antibot
@@ -693,7 +714,7 @@ def main():
     )
 
     if not success and error:
-        logger.error(f"取证失败: {error}")
+        logger.error(f"Forensic failed: {error}")
 
     sys.exit(0 if success else 1)
 

@@ -1,6 +1,6 @@
 """
-AntiBot Layer - 防风控层
-负责人类行为模拟、风险检测、冷却管理
+AntiBot Layer
+Responsible for human behavior simulation, risk detection, and cooldown management.
 """
 
 from .antibot import AntiBot

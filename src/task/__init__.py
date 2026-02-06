@@ -1,6 +1,6 @@
 """
-Task Layer - 任务管理层
-负责任务队列、调度、重试、状态管理
+Task Layer
+Responsible for task queue, scheduling, retry, and status management.
 """
 
 from .task_manager import TaskManager

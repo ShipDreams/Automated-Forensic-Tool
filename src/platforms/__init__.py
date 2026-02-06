@@ -1,6 +1,6 @@
 """
-Platform Handler Layer - 平台处理器层
-负责各平台的取证流程实现
+Platform Handler Layer
+Implements forensic workflows for various e-commerce platforms.
 """
 
 from .router import PlatformRouter

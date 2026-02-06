@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-状态检测器
-根据 UI 层级识别当前页面状态
+State Detector
+Recognizes current page state based on UI hierarchy.
 """
 
 import re
@@ -9,6 +9,7 @@ import logging
 from typing import Optional, List, Dict, Tuple
 from dataclasses import dataclass
 
+from locales import t
 from .states import (
     PageState,
     StateFeature,
@@ -22,7 +23,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class StateMatch:
-    """状态匹配结果"""
+    """State match result."""
     state: PageState
     confidence: float
     matched_features: List[str]
@@ -31,20 +32,20 @@ class StateMatch:
 
 class StateDetector:
     """
-    状态检测器
+    State Detector
 
-    核心功能：
-    - 从 UI 层级识别当前页面状态
-    - 支持多平台状态定义
-    - 返回置信度最高的匹配
+    Core features:
+    - Recognize current page state from UI hierarchy
+    - Support multi-platform state definitions
+    - Return the highest confidence match
     """
 
     def __init__(self, platform: str = None):
         """
-        初始化状态检测器
+        Initialize state detector.
 
         Args:
-            platform: 平台名称，用于加载特定平台的状态定义
+            platform: Platform name, used to load platform-specific state definitions
         """
         self.platform = platform
         self.state_definitions = get_all_states_for_platform(platform)
@@ -56,15 +57,15 @@ class StateDetector:
         activity_name: str = None
     ) -> StateMatch:
         """
-        检测当前页面状态
+        Detect current page state.
 
         Args:
-            ui_root: UI 层级树根节点
-            package_name: 当前包名
-            activity_name: 当前 Activity 名
+            ui_root: UI hierarchy tree root node
+            package_name: Current package name
+            activity_name: Current Activity name
 
         Returns:
-            最佳匹配的状态
+            Best matching state
         """
         if ui_root is None:
             return StateMatch(
@@ -74,24 +75,25 @@ class StateDetector:
                 platform='common'
             )
 
-        # 收集 UI 信息
+        # Collect UI info
         ui_info = self._collect_ui_info(ui_root)
 
-        # 尝试匹配所有状态
+        # Try to match all states
         matches = []
         for state, definition in self.state_definitions.items():
             match = self._match_state(definition, ui_info, package_name, activity_name)
             if match:
                 matches.append(match)
 
-        # 选择置信度最高的
+        # Select highest confidence
         if matches:
             best_match = max(matches, key=lambda m: m.confidence)
-            logger.debug(f"检测到状态: {best_match.state.name} "
-                        f"(置信度: {best_match.confidence:.2f})")
+            logger.debug(t('log.state_detected',
+                          state=best_match.state.name,
+                          confidence=best_match.confidence))
             return best_match
 
-        # 没有匹配到任何状态
+        # No state matched
         return StateMatch(
             state=PageState.UNKNOWN,
             confidence=0.0,
@@ -100,14 +102,14 @@ class StateDetector:
         )
 
     def _collect_ui_info(self, ui_root) -> Dict:
-        """收集 UI 层级信息"""
+        """Collect UI hierarchy info."""
         texts = []
         elements = []
 
         for elem in ui_root.iter():
             attrib = elem.attrib
 
-            # 收集文本
+            # Collect texts
             text = attrib.get('text', '')
             content_desc = attrib.get('content-desc', '')
             if text:
@@ -115,7 +117,7 @@ class StateDetector:
             if content_desc:
                 texts.append(content_desc.lower())
 
-            # 收集元素信息
+            # Collect element info
             elements.append({
                 'class': attrib.get('class', ''),
                 'resource-id': attrib.get('resource-id', ''),
@@ -139,13 +141,13 @@ class StateDetector:
         package_name: str = None,
         activity_name: str = None
     ) -> Optional[StateMatch]:
-        """尝试匹配单个状态"""
+        """Try to match a single state."""
         features = definition.features
         matched = []
         score = 0.0
         total_weight = 0.0
 
-        # 匹配必需文本（权重高）
+        # Match required texts (high weight)
         if features.required_texts:
             required_match = 0
             for text in features.required_texts:
@@ -154,13 +156,13 @@ class StateDetector:
                     matched.append(f"text:{text}")
 
             if required_match == 0:
-                return None  # 没有匹配到任何必需文本
+                return None  # No required text matched
 
             weight = 3.0
             score += (required_match / len(features.required_texts)) * weight
             total_weight += weight
 
-        # 匹配可选文本
+        # Match optional texts
         if features.optional_texts:
             optional_match = 0
             for text in features.optional_texts:
@@ -172,13 +174,13 @@ class StateDetector:
             score += (optional_match / len(features.optional_texts)) * weight
             total_weight += weight
 
-        # 检查排除文本
+        # Check excluded texts
         if features.excluded_texts:
             for text in features.excluded_texts:
                 if text.lower() in ui_info['all_text']:
-                    return None  # 包含排除文本，不匹配
+                    return None  # Contains excluded text, no match
 
-        # 匹配包名
+        # Match package name
         if features.package_patterns and package_name:
             for pattern in features.package_patterns:
                 if re.search(pattern, package_name, re.IGNORECASE):
@@ -187,11 +189,11 @@ class StateDetector:
                     total_weight += 2.0
                     break
             else:
-                # 包名不匹配，降低置信度
+                # Package name doesn't match, lower confidence
                 if total_weight == 0:
                     return None
 
-        # 匹配 Activity
+        # Match Activity
         if features.activity_patterns and activity_name:
             for pattern in features.activity_patterns:
                 if re.search(pattern, activity_name, re.IGNORECASE):
@@ -200,7 +202,7 @@ class StateDetector:
                     total_weight += 1.5
                     break
 
-        # 匹配必需元素
+        # Match required elements
         if features.required_elements:
             element_match = 0
             for required in features.required_elements:
@@ -215,7 +217,7 @@ class StateDetector:
             score += (element_match / len(features.required_elements)) * weight
             total_weight += weight
 
-        # 匹配可选元素
+        # Match optional elements
         if features.optional_elements:
             optional_match = 0
             for optional in features.optional_elements:
@@ -227,13 +229,13 @@ class StateDetector:
             score += (optional_match / len(features.optional_elements)) * weight
             total_weight += weight
 
-        # 计算最终置信度
+        # Calculate final confidence
         if total_weight == 0:
             return None
 
         confidence = score / total_weight
 
-        # 检查阈值
+        # Check threshold
         if confidence < features.confidence_threshold:
             return None
 
@@ -245,20 +247,20 @@ class StateDetector:
         )
 
     def _match_element(self, required: Dict, elements: List[Dict]) -> bool:
-        """匹配单个元素"""
+        """Match a single element."""
         for elem in elements:
             match = True
 
             for key, value in required.items():
                 if key.endswith('_pattern'):
-                    # 正则匹配
-                    actual_key = key[:-8]  # 去掉 _pattern
+                    # Regex match
+                    actual_key = key[:-8]  # Remove _pattern
                     actual_value = elem.get(actual_key, '')
                     if not re.search(value, actual_value, re.IGNORECASE):
                         match = False
                         break
                 else:
-                    # 精确匹配
+                    # Exact match
                     if elem.get(key) != value:
                         match = False
                         break
@@ -269,7 +271,7 @@ class StateDetector:
         return False
 
     def is_risk_state(self, state: PageState) -> bool:
-        """判断是否为风险状态"""
+        """Check if state is a risk state."""
         return state in [
             PageState.CAPTCHA,
             PageState.LOGIN_REQUIRED,
@@ -278,7 +280,7 @@ class StateDetector:
         ]
 
     def is_popup_state(self, state: PageState) -> bool:
-        """判断是否为弹窗状态"""
+        """Check if state is a popup state."""
         return state in [
             PageState.POPUP_AD,
             PageState.POPUP_PERMISSION,
@@ -288,13 +290,13 @@ class StateDetector:
 
     def detect_quick(self, ui_root) -> PageState:
         """
-        快速检测（只返回状态，不返回详细信息）
+        Quick detection (returns only state, no detailed info).
 
         Args:
-            ui_root: UI 层级树根节点
+            ui_root: UI hierarchy tree root node
 
         Returns:
-            页面状态
+            Page state
         """
         match = self.detect(ui_root)
         return match.state

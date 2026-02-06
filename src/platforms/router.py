@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-平台路由器
-根据商品链接自动识别平台并返回对应的处理器
+Platform Router
+Auto-detect platform from product URL and return corresponding handler.
 """
 
 import re
@@ -9,17 +9,19 @@ import logging
 from typing import Optional, Dict, Type
 from urllib.parse import urlparse
 
+from locales import t
+
 logger = logging.getLogger(__name__)
 
 
 class PlatformRouter:
     """
-    平台路由器
+    Platform Router
 
-    根据商品 URL 自动识别平台类型，并返回对应的 Handler 实例。
+    Auto-detect platform type from product URL and return corresponding Handler instance.
     """
 
-    # 平台 URL 特征映射
+    # Platform URL pattern mapping
     PLATFORM_PATTERNS = {
         'taobao': [
             r'taobao\.com',
@@ -41,7 +43,7 @@ class PlatformRouter:
             r'jd\.com',
             r'm\.jd\.com',
             r'item\.jd\.com',
-            r'3\.cn',  # 京东短链接
+            r'3\.cn',  # JD short link
         ],
         'douyin': [
             r'douyin\.com',
@@ -53,12 +55,12 @@ class PlatformRouter:
 
     def __init__(self, adb_controller, ui_locator, antibot=None):
         """
-        初始化路由器
+        Initialize router.
 
         Args:
-            adb_controller: ADBController 实例
-            ui_locator: UILocator 实例
-            antibot: AntiBot 实例（可选）
+            adb_controller: ADBController instance
+            ui_locator: UILocator instance
+            antibot: AntiBot instance (optional)
         """
         self.adb = adb_controller
         self.locator = ui_locator
@@ -67,91 +69,92 @@ class PlatformRouter:
 
     def detect_platform(self, url: str) -> Optional[str]:
         """
-        根据 URL 检测平台类型
+        Detect platform type from URL.
 
         Args:
-            url: 商品链接
+            url: Product link
 
         Returns:
-            平台名称 (taobao/alibaba/jd/douyin) 或 None
+            Platform name (taobao/alibaba/jd/douyin) or None
         """
         url_lower = url.lower()
 
         for platform, patterns in self.PLATFORM_PATTERNS.items():
             for pattern in patterns:
                 if re.search(pattern, url_lower):
-                    logger.info(f"检测到平台: {platform} (URL: {url[:50]}...)")
+                    logger.info(t('log.platform_detected', platform=platform, url=url[:50]))
                     return platform
 
-        logger.warning(f"无法识别平台: {url[:50]}...")
+        logger.warning(t('log.platform_not_detected', url=url[:50]))
         return None
 
     def get_handler(self, url: str):
         """
-        根据 URL 获取对应的平台处理器
+        Get platform handler for URL.
 
         Args:
-            url: 商品链接
+            url: Product link
 
         Returns:
-            对应的 PlatformHandler 实例，或 None
+            Corresponding PlatformHandler instance
 
         Raises:
-            ValueError: 如果平台未实现或不支持
+            ValueError: If platform is not recognized
+            NotImplementedError: If platform is not yet implemented
         """
         platform = self.detect_platform(url)
         if not platform:
-            raise ValueError(f"无法识别商品链接的平台: {url}")
+            raise ValueError(t('log.cannot_recognize_platform', url=url))
 
-        # 延迟导入，避免循环引用
+        # Lazy import to avoid circular references
         if platform == 'taobao':
             from .taobao_handler import TaobaoHandler
             return TaobaoHandler(self.adb, self.locator, self.antibot)
 
         elif platform == 'alibaba':
-            # TODO: 待实现
-            raise NotImplementedError("阿里巴巴平台暂未实现")
+            # TODO: To be implemented
+            raise NotImplementedError(t('log.alibaba_not_implemented'))
 
         elif platform == 'jd':
-            # TODO: 待实现
-            raise NotImplementedError("京东平台暂未实现")
+            # TODO: To be implemented
+            raise NotImplementedError(t('log.jd_not_implemented'))
 
         elif platform == 'douyin':
-            # TODO: 待实现
-            raise NotImplementedError("抖音平台暂未实现")
+            # TODO: To be implemented
+            raise NotImplementedError(t('log.douyin_not_implemented'))
 
         else:
-            raise ValueError(f"不支持的平台: {platform}")
+            raise ValueError(t('log.unsupported_platform', platform=platform))
 
     def is_supported(self, url: str) -> bool:
         """
-        检查 URL 是否属于支持的平台
+        Check if URL belongs to a supported platform.
 
         Args:
-            url: 商品链接
+            url: Product link
 
         Returns:
-            是否支持
+            Whether supported
         """
         platform = self.detect_platform(url)
-        # 目前只有淘宝完整实现
+        # Currently only Taobao is fully implemented
         return platform == 'taobao'
 
     def get_supported_platforms(self) -> list:
         """
-        获取所有支持的平台列表
+        Get list of supported platforms.
 
         Returns:
-            平台名称列表
+            List of platform names
         """
-        # 目前只有淘宝完整实现
+        # Currently only Taobao is fully implemented
         return ['taobao']
 
     def get_all_platforms(self) -> list:
         """
-        获取所有已知平台列表（包括未实现的）
+        Get all known platforms (including unimplemented ones).
 
         Returns:
-            平台名称列表
+            List of platform names
         """
         return list(self.PLATFORM_PATTERNS.keys())

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-任务管理器
-负责任务队列管理、调度、执行、重试
+Task Manager
+Responsible for task queue management, scheduling, execution, and retry.
 """
 
 import json
@@ -13,6 +13,7 @@ from datetime import datetime
 from queue import PriorityQueue
 from dataclasses import dataclass, field
 
+from locales import t
 from .task_model import Task, TaskStatus, TaskResult, TaskPriority
 from .task_loader import TaskLoader
 
@@ -21,21 +22,21 @@ logger = logging.getLogger(__name__)
 
 @dataclass(order=True)
 class PrioritizedTask:
-    """带优先级的任务（用于优先队列）"""
+    """Prioritized task (for priority queue)"""
     priority: int
     task: Task = field(compare=False)
 
 
 class TaskManager:
     """
-    任务管理器
+    Task Manager
 
-    核心功能：
-    - 任务队列管理（支持优先级）
-    - 任务调度与执行
-    - 失败重试（最多 3 次）
-    - 任务状态持久化
-    - 执行统计
+    Core features:
+    - Task queue management (with priority support)
+    - Task scheduling and execution
+    - Failure retry (max 3 times)
+    - Task status persistence
+    - Execution statistics
     """
 
     def __init__(
@@ -45,34 +46,34 @@ class TaskManager:
         retry_delay: int = 60
     ):
         """
-        初始化任务管理器
+        Initialize task manager.
 
         Args:
-            tasks_dir: 任务目录路径
-            max_retries: 最大重试次数
-            retry_delay: 重试延迟（秒）
+            tasks_dir: Tasks directory path
+            max_retries: Maximum retry count
+            retry_delay: Retry delay (seconds)
         """
         self.loader = TaskLoader(tasks_dir)
         self.tasks_dir = self.loader.tasks_dir
         self.max_retries = max_retries
         self.retry_delay = retry_delay
 
-        # 源文件路径（用于报告）
+        # Source file path (for report)
         self.source_file: Optional[str] = None
 
-        # 任务队列
+        # Task queue
         self._queue: PriorityQueue = PriorityQueue()
         self._all_tasks: Dict[str, Task] = {}
 
-        # 执行器（由外部注入）
+        # Executor (injected externally)
         self._executor: Optional[Callable[[Task], TaskResult]] = None
 
-        # 回调
+        # Callbacks
         self._on_task_start: List[Callable[[Task], None]] = []
         self._on_task_complete: List[Callable[[Task, TaskResult], None]] = []
         self._on_task_failed: List[Callable[[Task, str], None]] = []
 
-        # 统计
+        # Statistics
         self.stats = {
             'total': 0,
             'completed': 0,
@@ -84,70 +85,70 @@ class TaskManager:
 
     def set_executor(self, executor: Callable[[Task], TaskResult]):
         """
-        设置任务执行器
+        Set task executor.
 
         Args:
-            executor: 执行函数，接收 Task，返回 TaskResult
+            executor: Execution function, takes Task, returns TaskResult
         """
         self._executor = executor
 
     def add_task(self, task: Task) -> str:
         """
-        添加任务到队列
+        Add task to queue.
 
         Args:
-            task: 任务对象
+            task: Task object
 
         Returns:
-            任务 ID
+            Task ID
         """
-        # 设置默认重试次数
+        # Set default retry count
         task.max_retries = self.max_retries
 
-        # 添加到队列（优先级取负数，因为 PriorityQueue 是小顶堆）
+        # Add to queue (negate priority because PriorityQueue is min-heap)
         priority = -task.priority.value
         self._queue.put(PrioritizedTask(priority=priority, task=task))
 
-        # 保存引用
+        # Save reference
         self._all_tasks[task.id] = task
 
-        logger.info(f"添加任务: {task.id} ({task.product_url[:50]}...)")
+        logger.info(t('log.task_added', id=task.id, url=task.product_url[:50]))
         return task.id
 
     def add_tasks(self, tasks: List[Task]) -> List[str]:
-        """批量添加任务"""
+        """Batch add tasks"""
         return [self.add_task(task) for task in tasks]
 
     def add_url(self, url: str, **params) -> str:
         """
-        通过 URL 添加任务
+        Add task by URL.
 
         Args:
-            url: 商品链接
-            **params: 其他任务参数
+            url: Product link
+            **params: Other task parameters
 
         Returns:
-            任务 ID
+            Task ID
         """
         task = Task.from_url(url, **params)
         return self.add_task(task)
 
     def add_urls(self, urls: List[str], **params) -> List[str]:
-        """批量添加 URL"""
+        """Batch add URLs"""
         return [self.add_url(url, **params) for url in urls]
 
     def load_tasks_from_file(self, file_path: str) -> int:
         """
-        从文件加载任务
+        Load tasks from file.
 
         Args:
-            file_path: 文件路径
+            file_path: File path
 
         Returns:
-            加载的任务数量
+            Number of tasks loaded
         """
         path = Path(file_path)
-        self.source_file = str(path.resolve())  # 记录源文件路径
+        self.source_file = str(path.resolve())  # Record source file path
 
         if path.suffix == '.json':
             tasks = self.loader.load_from_json(file_path)
@@ -156,7 +157,7 @@ class TaskManager:
         elif path.suffix == '.txt':
             tasks = self.loader.load_from_text(file_path)
         else:
-            logger.error(f"不支持的文件格式: {path.suffix}")
+            logger.error(t('log.unsupported_file_format', suffix=path.suffix))
             return 0
 
         self.add_tasks(tasks)
@@ -164,10 +165,10 @@ class TaskManager:
 
     def load_pending_tasks(self) -> int:
         """
-        加载所有待处理任务
+        Load all pending tasks.
 
         Returns:
-            加载的任务数量
+            Number of tasks loaded
         """
         tasks = self.loader.load_pending_tasks()
         self.add_tasks(tasks)
@@ -175,10 +176,10 @@ class TaskManager:
 
     def get_next_task(self) -> Optional[Task]:
         """
-        获取下一个待执行的任务
+        Get next task to execute.
 
         Returns:
-            任务对象，如果队列为空返回 None
+            Task object, None if queue is empty
         """
         if self._queue.empty():
             return None
@@ -187,77 +188,77 @@ class TaskManager:
         return prioritized.task
 
     def peek_next_task(self) -> Optional[Task]:
-        """查看下一个任务（不移出队列）"""
+        """Peek next task (without removing from queue)"""
         if self._queue.empty():
             return None
-        # PriorityQueue 不支持 peek，这里简单实现
+        # PriorityQueue doesn't support peek, simple implementation here
         prioritized = self._queue.get()
         self._queue.put(prioritized)
         return prioritized.task
 
     def execute_task(self, task: Task) -> TaskResult:
         """
-        执行单个任务
+        Execute single task.
 
         Args:
-            task: 任务对象
+            task: Task object
 
         Returns:
-            执行结果
+            Execution result
         """
         if not self._executor:
-            raise RuntimeError("未设置任务执行器，请先调用 set_executor()")
+            raise RuntimeError(t('log.executor_not_set'))
 
-        # 标记运行中
+        # Mark as running
         task.mark_running()
 
-        # 触发回调
+        # Trigger callbacks
         for callback in self._on_task_start:
             try:
                 callback(task)
             except Exception as e:
-                logger.error(f"任务开始回调失败: {e}")
+                logger.error(t('log.task_start_callback_failed', error=e))
 
         try:
-            # 执行任务
-            logger.info(f"开始执行任务: {task.id}")
+            # Execute task
+            logger.info(t('log.task_started', id=task.id))
             result = self._executor(task)
 
             if result.success:
                 task.mark_completed(result)
                 self.stats['completed'] += 1
-                logger.info(f"任务完成: {task.id}")
+                logger.info(t('log.task_completed', id=task.id))
 
-                # 触发完成回调
+                # Trigger complete callback
                 for callback in self._on_task_complete:
                     try:
                         callback(task, result)
                     except Exception as e:
-                        logger.error(f"任务完成回调失败: {e}")
+                        logger.error(t('log.task_complete_callback_failed', error=e))
             else:
-                self._handle_task_failure(task, result.error or "未知错误")
+                self._handle_task_failure(task, result.error or "Unknown error")
 
         except Exception as e:
-            logger.error(f"任务执行异常: {e}", exc_info=True)
+            logger.error(t('log.task_execution_error', error=e), exc_info=True)
             self._handle_task_failure(task, str(e))
             result = TaskResult(success=False, error=str(e))
 
         return result
 
     def _handle_task_failure(self, task: Task, error: str):
-        """处理任务失败"""
-        # 判断是否可重试
+        """Handle task failure"""
+        # Determine if can retry
         can_retry = task.retry_count < self.max_retries
 
         task.mark_failed(error, can_retry=can_retry)
 
         if task.status == TaskStatus.RETRY:
-            # 加回队列等待重试
+            # Add back to queue for retry
             self.stats['retried'] += 1
-            logger.warning(f"任务 {task.id} 将在 {self.retry_delay} 秒后重试 "
-                          f"(第 {task.retry_count}/{self.max_retries} 次)")
+            logger.warning(t('log.task_retry_scheduled', id=task.id, delay=self.retry_delay,
+                           count=task.retry_count, max=self.max_retries))
 
-            # 降低优先级（重试任务优先级降低）
+            # Lower priority (retry tasks have lower priority)
             task.priority = TaskPriority.LOW
             self._queue.put(PrioritizedTask(
                 priority=-task.priority.value + task.retry_count,
@@ -266,27 +267,27 @@ class TaskManager:
         else:
             self.stats['failed'] += 1
 
-            # 触发失败回调
+            # Trigger failure callback
             for callback in self._on_task_failed:
                 try:
                     callback(task, error)
                 except Exception as e:
-                    logger.error(f"任务失败回调失败: {e}")
+                    logger.error(t('log.task_failed_callback_error', error=e))
 
     def run_all(self, delay_between_tasks: int = 5) -> Dict[str, Any]:
         """
-        执行所有队列中的任务
+        Execute all tasks in queue.
 
         Args:
-            delay_between_tasks: 任务间延迟（秒）
+            delay_between_tasks: Delay between tasks (seconds)
 
         Returns:
-            执行统计
+            Execution statistics
         """
         self.stats['start_time'] = datetime.now().isoformat()
         self.stats['total'] = self._queue.qsize()
 
-        logger.info(f"开始批量执行，共 {self.stats['total']} 个任务")
+        logger.info(t('log.batch_execution_start', count=self.stats['total']))
 
         while not self._queue.empty():
             task = self.get_next_task()
@@ -296,26 +297,26 @@ class TaskManager:
             try:
                 self.execute_task(task)
             except Exception as e:
-                logger.error(f"执行任务 {task.id} 时发生错误: {e}")
+                logger.error(t('log.task_execution_error', error=e))
 
-            # 任务间延迟
+            # Delay between tasks
             if not self._queue.empty():
-                logger.info(f"等待 {delay_between_tasks} 秒后执行下一个任务...")
+                logger.info(t('log.waiting_next_task', seconds=delay_between_tasks))
                 time.sleep(delay_between_tasks)
 
         self.stats['end_time'] = datetime.now().isoformat()
 
-        # 打印统计
+        # Print statistics
         self._print_stats()
 
         return self.stats
 
     def run_single(self) -> Optional[TaskResult]:
         """
-        执行单个任务
+        Execute single task.
 
         Returns:
-            执行结果，如果队列为空返回 None
+            Execution result, None if queue is empty
         """
         task = self.get_next_task()
         if not task:
@@ -324,81 +325,81 @@ class TaskManager:
         return self.execute_task(task)
 
     def _print_stats(self):
-        """打印执行统计"""
+        """Print execution statistics"""
         logger.info("=" * 50)
-        logger.info("任务执行统计")
+        logger.info(t('log.task_stats_title'))
         logger.info("=" * 50)
-        logger.info(f"总任务数: {self.stats['total']}")
-        logger.info(f"成功: {self.stats['completed']}")
-        logger.info(f"失败: {self.stats['failed']}")
-        logger.info(f"重试次数: {self.stats['retried']}")
+        logger.info(t('log.task_stat_total', count=self.stats['total']))
+        logger.info(t('log.task_stat_completed', count=self.stats['completed']))
+        logger.info(t('log.task_stat_failed', count=self.stats['failed']))
+        logger.info(t('log.task_stat_retried', count=self.stats['retried']))
         if self.stats['start_time'] and self.stats['end_time']:
             start = datetime.fromisoformat(self.stats['start_time'])
             end = datetime.fromisoformat(self.stats['end_time'])
             duration = end - start
-            logger.info(f"总耗时: {duration}")
+            logger.info(t('log.task_stat_duration', duration=duration))
         logger.info("=" * 50)
 
-    # ==================== 回调注册 ====================
+    # ==================== Callback Registration ====================
 
     def on_task_start(self, callback: Callable[[Task], None]):
-        """注册任务开始回调"""
+        """Register task start callback"""
         self._on_task_start.append(callback)
 
     def on_task_complete(self, callback: Callable[[Task, TaskResult], None]):
-        """注册任务完成回调"""
+        """Register task complete callback"""
         self._on_task_complete.append(callback)
 
     def on_task_failed(self, callback: Callable[[Task, str], None]):
-        """注册任务失败回调"""
+        """Register task failed callback"""
         self._on_task_failed.append(callback)
 
-    # ==================== 状态查询 ====================
+    # ==================== Status Query ====================
 
     def get_task(self, task_id: str) -> Optional[Task]:
-        """获取任务"""
+        """Get task"""
         return self._all_tasks.get(task_id)
 
     def get_queue_size(self) -> int:
-        """获取队列大小"""
+        """Get queue size"""
         return self._queue.qsize()
 
     def is_empty(self) -> bool:
-        """队列是否为空"""
+        """Check if queue is empty"""
         return self._queue.empty()
 
     def get_all_tasks(self) -> List[Task]:
-        """获取所有任务"""
+        """Get all tasks"""
         return list(self._all_tasks.values())
 
     def get_tasks_by_status(self, status: TaskStatus) -> List[Task]:
-        """按状态获取任务"""
+        """Get tasks by status"""
         return [t for t in self._all_tasks.values() if t.status == status]
 
     def cancel_task(self, task_id: str) -> bool:
-        """取消任务"""
+        """Cancel task"""
         task = self._all_tasks.get(task_id)
         if not task:
             return False
 
         if task.status == TaskStatus.RUNNING:
-            logger.warning("无法取消正在运行的任务")
+            logger.warning(t('log.cannot_cancel_running'))
             return False
 
         task.mark_cancelled()
         return True
 
     def clear_queue(self):
-        """清空队列"""
+        """Clear queue"""
         while not self._queue.empty():
             try:
                 self._queue.get_nowait()
             except:
                 break
-        logger.info("任务队列已清空")
+        logger.info(t('log.queue_cleared'))
 
     def reset_stats(self):
-        """重置统计"""
+        """Reset statistics"""
         self.stats = {
             'total': 0,
             'completed': 0,
@@ -408,43 +409,43 @@ class TaskManager:
             'end_time': None,
         }
 
-    # ==================== 报告生成 ====================
+    # ==================== Report Generation ====================
 
     def generate_report(self, output_dir: str = None) -> str:
         """
-        生成批量任务汇总报告
+        Generate batch task summary report.
 
         Args:
-            output_dir: 报告输出目录，默认为项目根目录下的 reports/
+            output_dir: Report output directory, defaults to project root's reports/
 
         Returns:
-            报告文件路径
+            Report file path
         """
-        # 确定输出目录
+        # Determine output directory
         if output_dir:
             reports_dir = Path(output_dir)
         else:
-            # 默认放在项目根目录的 reports/ 下
+            # Default to project root's reports/
             reports_dir = Path(__file__).parent.parent.parent / 'reports'
 
         reports_dir.mkdir(parents=True, exist_ok=True)
 
-        # 生成报告文件名
+        # Generate report filename
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         report_file = reports_dir / f'batch_report_{timestamp}.json'
 
-        # 计算耗时
+        # Calculate duration
         duration_seconds = 0
         if self.stats['start_time'] and self.stats['end_time']:
             start = datetime.fromisoformat(self.stats['start_time'])
             end = datetime.fromisoformat(self.stats['end_time'])
             duration_seconds = int((end - start).total_seconds())
 
-        # 统计各状态任务数
+        # Count tasks by status
         pending_count = len([t for t in self._all_tasks.values()
                             if t.status == TaskStatus.PENDING])
 
-        # 构建任务列表（简化字段）
+        # Build task list (simplified fields)
         tasks_list = []
         for task in self._all_tasks.values():
             task_info = {
@@ -453,19 +454,19 @@ class TaskManager:
                 'status': task.status.value,
             }
 
-            # 添加时间信息（如果有）
+            # Add time info (if available)
             if task.started_at:
                 task_info['started_at'] = task.started_at
             if task.completed_at:
                 task_info['completed_at'] = task.completed_at
 
-            # 添加错误信息（如果失败）
+            # Add error info (if failed)
             if task.status == TaskStatus.FAILED and task.result and task.result.error:
                 task_info['error'] = task.result.error
 
             tasks_list.append(task_info)
 
-        # 构建报告
+        # Build report
         report = {
             'report_time': datetime.now().isoformat(),
             'source_file': self.source_file,
@@ -479,9 +480,9 @@ class TaskManager:
             'tasks': tasks_list
         }
 
-        # 写入文件
+        # Write to file
         with open(report_file, 'w', encoding='utf-8') as f:
             json.dump(report, f, ensure_ascii=False, indent=2)
 
-        logger.info(f"✓ 汇总报告已生成: {report_file}")
+        logger.info(t('log.report_generated', path=report_file))
         return str(report_file)
