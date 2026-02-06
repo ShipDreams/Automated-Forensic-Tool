@@ -621,5 +621,14 @@
   "log.flow_failed_at_step": "Flow failed at step {step}: {result}",
   "log.flow_complete": "Flow execution complete",
   "log.popup_closed": "Popup closed successfully",
-  "log.state_machine_reset": "State machine reset"
+  "log.state_machine_reset": "State machine reset",
+
+  "notify.captcha_title": "Manual Assistance Required",
+  "notify.captcha_message": "Device {device_id} encountered captcha, please handle manually",
+  "notify.send_success": "Desktop notification sent",
+  "notify.send_failed": "Failed to send notification: {error}",
+  "notify.sound_play_failed": "Failed to play notification sound: {error}",
+  "notify.plyer_not_installed": "plyer library not installed, notification fallback to terminal bell",
+  "notify.fallback_terminal_bell": "Using terminal bell as notification fallback",
+  "notify.unsupported_platform": "Unsupported platform for sound: {platform}"
 }

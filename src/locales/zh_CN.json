@@ -621,5 +621,14 @@
   "log.flow_failed_at_step": "流程在步骤 {step} 失败: {result}",
   "log.flow_complete": "流程执行完成",
   "log.popup_closed": "关闭弹窗成功",
-  "log.state_machine_reset": "状态机已重置"
+  "log.state_machine_reset": "状态机已重置",
+
+  "notify.captcha_title": "需要人工辅助",
+  "notify.captcha_message": "设备 {device_id} 遇到验证码，请手动处理",
+  "notify.send_success": "桌面通知已发送",
+  "notify.send_failed": "发送通知失败: {error}",
+  "notify.sound_play_failed": "播放通知声音失败: {error}",
+  "notify.plyer_not_installed": "plyer 库未安装，通知将使用终端响铃替代",
+  "notify.fallback_terminal_bell": "使用终端响铃作为通知替代",
+  "notify.unsupported_platform": "不支持的声音播放平台: {platform}"
 }
