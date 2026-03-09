@@ -646,6 +646,31 @@ class ADBController:
             logger.error(t('log.force_stop_failed', error=e))
             return False
 
+    def launch_app(self, package_name: str) -> bool:
+        """
+        Launch app directly via ADB monkey command.
+
+        Uses monkey to launch app's main activity, ensuring it opens to the default home page
+        rather than any promotional/marketing tab.
+
+        Args:
+            package_name: Application package name (e.g., "com.taobao.taobao")
+
+        Returns:
+            Whether launch was successful
+        """
+        try:
+            logger.info(t('log.launch_app_direct', package=package_name))
+            result = self._run_adb_command([
+                "shell", "monkey", "-p", package_name,
+                "-c", "android.intent.category.LAUNCHER", "1"
+            ])
+            time.sleep(1)
+            return result.returncode == 0
+        except Exception as e:
+            logger.error(t('log.launch_app_direct_failed', package=package_name, error=e))
+            return False
+
     def swipe(self, x1: int, y1: int, x2: int, y2: int, duration_ms: int = 300) -> bool:
         """
         Perform swipe operation.

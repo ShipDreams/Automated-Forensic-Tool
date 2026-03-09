@@ -57,13 +57,23 @@ class TaobaoHandler(BasePlatformHandler):
         return True
 
     def launch_app(self, wait_time: int = 10) -> bool:
-        """Click 'Open' from app store search results to launch Taobao."""
+        """
+        Launch Taobao directly via ADB command.
+
+        Instead of clicking 'Open' button in app store (which may redirect to
+        marketing/promotional tabs like Flash Sale), use ADB monkey command to
+        launch Taobao's main activity, ensuring it opens to the default home page.
+        """
         logger.info("=" * 60)
         logger.info(t('log.taobao_launch_from_store'))
         logger.info("=" * 60)
 
-        # Find and click 'Open' button in search results
-        if not self.locator.find_and_click_app_store_open_button(max_attempts=3):
+        # Screenshot app store search results as proof of legitimate source
+        self.take_screenshot(t('log.screenshot_app_store_proof'))
+
+        # Launch Taobao directly via ADB (avoid marketing page from app store)
+        logger.info(t('log.launch_taobao_direct'))
+        if not self.adb.launch_app(self.get_app_package()):
             logger.error(t('log.click_open_button_failed'))
             return False
 
