@@ -35,7 +35,7 @@ test_dump.xml
 # 验证码POC（需要Root环境测试）
 tests/captcha_poc/
 
-task.csv
+tasks.csv
 
 # 报告文件
 reports/
