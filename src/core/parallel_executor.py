@@ -33,7 +33,8 @@ class DeviceWorkerContext:
     adb: ADBController
     recorder: ScreenRecorder
     locator: UILocator
-    antibot: Any = None  # TaobaoAntiBot instance
+    base_antibot: Any = None  # AntiBot instance (for human behavior simulation in handlers)
+    antibot: Any = None  # TaobaoAntiBot instance (for cycle cooldown strategy)
     platform_router: Any = None  # PlatformRouter instance
 
 
@@ -118,7 +119,17 @@ class ParallelExecutor:
         recorder = ScreenRecorder(adb)
         locator = UILocator(adb)
 
-        # Initialize anti-detection (if enabled)
+        # Initialize AntiBot (for human behavior simulation in handlers)
+        base_antibot = None
+        if self.enable_antibot:
+            try:
+                from antibot import AntiBot
+                base_antibot = AntiBot()
+                logger.info(t('log.device_antibot_initialized', device_id=device_id))
+            except Exception as e:
+                logger.warning(t('log.device_antibot_init_failed', device_id=device_id, error=e))
+
+        # Initialize TaobaoAntiBot (for cycle cooldown strategy)
         antibot = None
         if self.enable_antibot:
             try:
@@ -130,15 +141,15 @@ class ParallelExecutor:
                     config=config,
                     device_id=device_id  # Key: use device ID to isolate state
                 )
-                logger.info(t('log.device_antibot_initialized', device_id=device_id))
+                logger.info(t('log.device_taobao_antibot_initialized', device_id=device_id))
             except Exception as e:
                 logger.warning(t('log.device_antibot_init_failed', device_id=device_id, error=e))
 
-        # Initialize platform router
+        # Initialize platform router (pass base_antibot for handler sleep/simulation)
         platform_router = None
         try:
             from platforms import PlatformRouter
-            platform_router = PlatformRouter(adb, locator, antibot)
+            platform_router = PlatformRouter(adb, locator, base_antibot)
         except Exception as e:
             logger.warning(t('log.device_router_init_failed', device_id=device_id, error=e))
 
@@ -147,6 +158,7 @@ class ParallelExecutor:
             adb=adb,
             recorder=recorder,
             locator=locator,
+            base_antibot=base_antibot,
             antibot=antibot,
             platform_router=platform_router
         )
@@ -363,6 +375,7 @@ class ParallelExecutor:
                 return False
 
         recording_started = False
+        task_success = False
 
         try:
             # Check cooldown status
@@ -433,16 +446,18 @@ class ParallelExecutor:
                         antibot.trigger_cooldown("Completed multiple cycles")
                         antibot.close_taobao()
 
-            # Close apps to ensure initial state for next task
-            adb.force_stop_app("com.taobao.taobao")
-            adb.force_stop_app("com.a1010bao.web.rdbao")
-
+            task_success = True
             return True
 
         except Exception as e:
             logger.error(t('log.device_task_exception', device_id=device_id, error=e))
             self._cancel_recording(recorder, recording_started)
             return False
+
+        finally:
+            # Always close apps to ensure clean state for next task
+            adb.force_stop_app("com.taobao.taobao")
+            adb.force_stop_app("com.a1010bao.web.rdbao")
 
     def _cancel_recording(self, recorder: ScreenRecorder, recording_started: bool):
         """Cancel recording"""
