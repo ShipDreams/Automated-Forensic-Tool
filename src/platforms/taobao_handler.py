@@ -313,14 +313,25 @@ class TaobaoHandler(BasePlatformHandler):
         logger.info(t('log.waiting_shop_page'))
         self._sleep(2500, 3500)
 
-        # Click shop name or avatar to enter shop home
+        # 点击店铺名称文本进入店铺主页（带重试机制，复杂页面可能加载较慢）
         logger.info(t('log.clicking_shop_name'))
-        root = self.locator.dump_and_parse()
-        if not root:
-            logger.error(t('log.cannot_get_shop_ui'))
-            return False
+        max_retries = 5
+        shop_name = None
+        for attempt in range(1, max_retries + 1):
+            root = self.locator.dump_and_parse()
+            if not root:
+                logger.warning(f"[重试 {attempt}/{max_retries}] 无法获取UI层次结构，等待后重试...")
+                self._sleep(1500 + attempt * 500, 2000 + attempt * 500)
+                continue
 
-        shop_name = self.locator.find_shop_name_or_avatar(root)
+            shop_name = self.locator.find_shop_name_or_avatar(root)
+            if shop_name:
+                logger.info(f"[重试 {attempt}/{max_retries}] 成功找到店铺名称元素")
+                break
+            else:
+                logger.warning(f"[重试 {attempt}/{max_retries}] 未找到店铺名称，等待页面加载后重试...")
+                self._sleep(1500 + attempt * 500, 2000 + attempt * 500)
+
         if not shop_name:
             logger.error(t('log.shop_name_not_found'))
             return False
@@ -351,14 +362,25 @@ class TaobaoHandler(BasePlatformHandler):
             if not self.view_shop_info():
                 return False
 
-            # Click "Qualification Certificates"
+            # 点击"资质证照"按钮（带重试机制，店铺主页可能加载较慢）
             logger.info(t('log.finding_qualification_button'))
-            root = self.locator.dump_and_parse()
-            if not root:
-                logger.error(t('log.cannot_get_shop_home_ui'))
-                return False
+            max_retries = 3
+            qualification_btn = None
+            for attempt in range(1, max_retries + 1):
+                root = self.locator.dump_and_parse()
+                if not root:
+                    logger.warning(f"[重试 {attempt}/{max_retries}] 无法获取店铺主页UI，等待后重试...")
+                    self._sleep(1500 + attempt * 500, 2000 + attempt * 500)
+                    continue
 
-            qualification_btn = self.locator.find_qualification_button(root)
+                qualification_btn = self.locator.find_qualification_button(root)
+                if qualification_btn:
+                    logger.info(f"[重试 {attempt}/{max_retries}] 成功找到资质证照按钮")
+                    break
+                else:
+                    logger.warning(f"[重试 {attempt}/{max_retries}] 未找到资质证照按钮，等待页面加载后重试...")
+                    self._sleep(1500 + attempt * 500, 2000 + attempt * 500)
+
             if not qualification_btn:
                 logger.warning(t('log.qualification_button_not_found'))
                 logger.warning(t('log.qualification_not_found_reason'))

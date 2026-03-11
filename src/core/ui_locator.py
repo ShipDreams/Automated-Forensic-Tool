@@ -992,24 +992,31 @@ class UILocator:
 
     def find_shop_name_or_avatar(self, root: ET.Element) -> Optional[UIElement]:
         """
-        Find shop page shop name or avatar.
-        Priority: shop name text > logoCover > resource-id > avatar ImageView
-        (Clicking shop name is safer than avatar which may navigate elsewhere)
+        在店铺页找到店铺名称文本元素并点击。
+        只点击店铺名称文本，绝不点击头像/图片，避免跳转到错误页面。
+        所有策略完全基于 XML dump，不做任何位置猜测。
 
         Args:
             root: UI root node
 
         Returns:
-            Found shop name or avatar element
+            找到的店铺名称文本元素（可点击）或 None
         """
         logger.info(t('log.search_shop_name_avatar'))
 
-        # Video control element keywords to exclude
+        # 排除的 resource-id 关键词（视频控件等）
         exclude_res_id_keywords = ['play', 'mute', 'video', 'sound', 'volume', 'seek', 'progress']
         exclude_desc_keywords = ['播放', 'play', '静音', '音量', '返回', 'back', '按钮']
+        # 不应被当作店铺名的常见 UI 文本
+        exclude_texts = {
+            '关注', '+ 关注', '+关注', '领券', '客服', '首页', '宝贝', '直播',
+            '新品', '晒单', '分类', '搜索店内宝贝', '搜索', '综合', '销量',
+            '上新', '价格', '评价', '发货速度快', '下拉进入店铺直播间',
+            '天猫', '淘宝', '店铺动态', '全部宝贝', '上新', '好评',
+        }
 
         def _is_video_control(node) -> bool:
-            """Check if node is video control element or navigation button (to exclude)"""
+            """检查是否为视频控件或导航按钮（需排除）"""
             rid = node.attrib.get('resource-id', '').lower()
             desc = node.attrib.get('content-desc', '').lower()
             for kw in exclude_res_id_keywords:
@@ -1020,87 +1027,172 @@ class UILocator:
                     return True
             return False
 
-        # Strategy 0 (highest priority): Find shop name text in top area
-        # Shop names usually contain keywords like "旗舰店", "专卖店", "官方店" etc.
-        logger.info("[Strategy 0] Finding shop name text (preferred over avatar)")
-        shop_name_keywords = ['旗舰店', '专卖店', '官方店', '专营店', '自营店', '品牌店']
+        def _is_excluded_text(text: str) -> bool:
+            """检查文本是否为不应被当作店铺名的常见 UI 文本"""
+            text_stripped = text.strip()
+            if text_stripped in exclude_texts:
+                return True
+            # 排除过短（<=1字符）或过长（>30字符，可能是描述）的文本
+            if len(text_stripped) <= 1 or len(text_stripped) > 30:
+                return True
+            # 排除纯数字、价格类文本
+            if re.match(r'^[\d¥￥.,+\-\s%折万亿]+$', text_stripped):
+                return True
+            # 排除以 ¥ 开头的价格
+            if text_stripped.startswith('¥') or text_stripped.startswith('￥'):
+                return True
+            return False
+
+        def _try_get_clickable(node, element) -> Optional[UIElement]:
+            """尝试返回可点击元素：元素本身或其可点击的父元素"""
+            if element.clickable:
+                return element
+            parent = self._find_clickable_parent(root, node)
+            if parent:
+                return parent
+            # 即使没有标记为 clickable，有有效 bounds 的文本元素也可以通过坐标点击
+            bounds = element.get_bounds()
+            if bounds and bounds != (0, 0, 0, 0):
+                return element
+            return None
+
         screen_size = self.adb.get_screen_size()
-        if screen_size:
-            width, height = screen_size
-            top_region_height = height // 3  # Top 1/3 area
+        if not screen_size:
+            logger.warning("无法获取屏幕尺寸，策略受限")
+            return None
+        width, height = screen_size
+        top_region_height = height // 3  # 屏幕上 1/3 区域
 
-            for node in root.iter():
-                text = node.attrib.get('text', '')
-                if text and not _is_video_control(node):
-                    # Check if contains shop name keywords
-                    for keyword in shop_name_keywords:
-                        if keyword in text:
-                            element = UIElement(node)
-                            bounds = element.get_bounds()
-                            if bounds and bounds != (0, 0, 0, 0):
-                                x1, y1, x2, y2 = bounds
-                                if y1 < top_region_height:
-                                    # Find clickable parent if element itself not clickable
-                                    if element.clickable:
-                                        logger.info(f"[Strategy 0] Found shop name text: {text}, bounds={bounds}")
-                                        return element
-                                    parent = self._find_clickable_parent(root, node)
-                                    if parent:
-                                        logger.info(f"[Strategy 0] Found clickable parent for shop name: {text}, bounds={parent.get_bounds()}")
-                                        return parent
-                            break
-
-        # Strategy 1: Find shop avatar by content-desc="logoCover"
-        logger.info(t('log.strategy_0_logo_cover'))
+        # ========== Strategy 1: 按店铺类型关键词匹配店铺名文本 ==========
+        logger.info("[Strategy 1] 按关键词查找店铺名文本（旗舰店/专卖店/企业店铺等）")
+        shop_name_keywords = ['旗舰店', '专卖店', '官方店', '专营店', '自营店', '品牌店', '企业店铺', '企业店']
         for node in root.iter():
-            desc = node.attrib.get('content-desc', '')
-            if desc == 'logoCover':
-                element = UIElement(node)
-                bounds = element.get_bounds()
-                if bounds and bounds != (0, 0, 0, 0):
-                    # Prefer finding clickable parent element
-                    parent = self._find_clickable_parent(root, node)
-                    if parent:
-                        logger.info(t('log.strategy_0_logo_parent', bounds=parent.get_bounds()))
-                        return parent
-                    logger.info(t('log.strategy_0_logo_success', bounds=bounds))
-                    return element
+            text = node.attrib.get('text', '')
+            if text and not _is_video_control(node) and not _is_excluded_text(text):
+                for keyword in shop_name_keywords:
+                    if keyword in text:
+                        element = UIElement(node)
+                        bounds = element.get_bounds()
+                        if bounds and bounds != (0, 0, 0, 0):
+                            x1, y1, x2, y2 = bounds
+                            if y1 < top_region_height:
+                                result = _try_get_clickable(node, element)
+                                if result:
+                                    logger.info(f"[Strategy 1] 找到店铺名文本: '{text}', bounds={bounds}")
+                                    return result
 
-        # Strategy 2: Find by resource-id
-        logger.info(t('log.strategy_1_shop_name'))
-        shop_ids = ['shop_name', 'store_name', 'shop_title', 'seller_name', 'avatar', 'shop_avatar']
-        for res_id in shop_ids:
+        # ========== Strategy 2: 按 resource-id 查找店名文本元素（排除 ImageView）==========
+        logger.info("[Strategy 2] 按 resource-id 查找店名文本元素")
+        shop_name_ids = ['shop_name', 'store_name', 'shop_title', 'seller_name', 'shopName', 'storeName']
+        for res_id_keyword in shop_name_ids:
             for node in root.iter():
                 rid = node.attrib.get('resource-id', '').lower()
-                if res_id in rid and not _is_video_control(node):
-                    element = UIElement(node)
-                    logger.info(t('log.strategy_1_shop_name_success', id=rid))
-                    return element
-
-        # Strategy 3: ImageView in top area (avatar usually at top) - last resort
-        logger.info(t('log.strategy_2_avatar'))
-        if screen_size:
-            width, height = screen_size
-            top_region_height = height // 4
-
-            # Find ImageView
-            for node in root.iter():
-                if 'imageview' in node.attrib.get('class', '').lower():
-                    # Exclude video control elements
-                    if _is_video_control(node):
+                if res_id_keyword.lower() in rid and not _is_video_control(node):
+                    class_name = node.attrib.get('class', '').lower()
+                    # 只接受文本类元素，跳过 ImageView
+                    if 'imageview' in class_name:
                         continue
-
                     element = UIElement(node)
                     bounds = element.get_bounds()
-                    if bounds:
+                    if bounds and bounds != (0, 0, 0, 0):
+                        result = _try_get_clickable(node, element)
+                        if result:
+                            text = node.attrib.get('text', '')
+                            logger.info(f"[Strategy 2] 按 resource-id 找到店名: '{rid}', text='{text}', bounds={bounds}")
+                            return result
+
+        # ========== Strategy 3: 通过"粉丝"/"关注"等指示元素定位附近的店铺名文本 ==========
+        logger.info("[Strategy 3] 通过指示元素（粉丝/关注/评分）定位附近店铺名")
+        indicator_keywords = ['粉丝', '企业店铺']
+        indicator_bounds_list = []
+        for node in root.iter():
+            text = node.attrib.get('text', '')
+            desc = node.attrib.get('content-desc', '')
+            for kw in indicator_keywords:
+                if kw in text or kw in desc:
+                    elem = UIElement(node)
+                    b = elem.get_bounds()
+                    if b and b != (0, 0, 0, 0):
+                        indicator_bounds_list.append(b)
+                    break
+
+        # 也查找"+ 关注"按钮作为指示元素
+        for node in root.iter():
+            text = node.attrib.get('text', '').strip()
+            if text in ('+ 关注', '+关注', '关注'):
+                elem = UIElement(node)
+                b = elem.get_bounds()
+                if b and b != (0, 0, 0, 0) and b[1] < top_region_height:
+                    indicator_bounds_list.append(b)
+                    break
+
+        if indicator_bounds_list:
+            # 找到最上面的指示元素，确定店铺信息区域
+            min_y = min(b[1] for b in indicator_bounds_list)
+            max_y = max(b[3] for b in indicator_bounds_list)
+            shop_area_top = max(0, min_y - 150)
+            shop_area_bottom = max_y + 50
+
+            # 收集此区域内的候选文本元素
+            candidates = []
+            for node in root.iter():
+                text = node.attrib.get('text', '')
+                if text and not _is_video_control(node) and not _is_excluded_text(text):
+                    class_name = node.attrib.get('class', '').lower()
+                    if 'imageview' in class_name:
+                        continue
+                    element = UIElement(node)
+                    bounds = element.get_bounds()
+                    if bounds and bounds != (0, 0, 0, 0):
                         x1, y1, x2, y2 = bounds
-                        # In top area and square (avatar usually square)
-                        if y1 < top_region_height:
-                            width_e = x2 - x1
-                            height_e = y2 - y1
-                            if abs(width_e - height_e) < width_e * 0.2:  # Width-height ratio close to 1:1
-                                logger.info(t('log.strategy_2_avatar_success', bounds=bounds))
-                                return element
+                        if shop_area_top <= y1 <= shop_area_bottom:
+                            text_len = len(text.strip())
+                            if 2 <= text_len <= 25:
+                                candidates.append((node, element, bounds, text))
+
+            if candidates:
+                # 按"像店铺名"的程度打分排序
+                def name_score(item):
+                    _, _, _, txt = item
+                    txt = txt.strip()
+                    score = len(txt)
+                    # 包含常见店铺名后缀的加分
+                    if any(kw in txt for kw in ['店', '厂', '行', '坊', '堂', '阁', '轩', '居', '馆', '社', '号']):
+                        score += 20
+                    # 包含地名的加分
+                    if any(kw in txt for kw in ['市', '省', '县', '区', '镇']):
+                        score += 10
+                    # 包含常见商标符号的加分
+                    if any(c in txt for c in ['❤', '♥', '★', '☆']):
+                        score += 5
+                    return score
+
+                candidates.sort(key=name_score, reverse=True)
+                best_node, best_element, best_bounds, best_text = candidates[0]
+                result = _try_get_clickable(best_node, best_element)
+                if result:
+                    logger.info(f"[Strategy 3] 通过指示元素定位到店铺名: '{best_text}', bounds={best_bounds}")
+                    return result
+
+        # ========== Strategy 4: 从 content-desc 查找店铺名（排除 ImageView）==========
+        logger.info("[Strategy 4] 从 content-desc 查找店铺名")
+        for node in root.iter():
+            desc = node.attrib.get('content-desc', '')
+            if desc and not _is_video_control(node):
+                for keyword in shop_name_keywords:
+                    if keyword in desc:
+                        class_name = node.attrib.get('class', '').lower()
+                        if 'imageview' in class_name:
+                            continue
+                        element = UIElement(node)
+                        bounds = element.get_bounds()
+                        if bounds and bounds != (0, 0, 0, 0):
+                            x1, y1, x2, y2 = bounds
+                            if y1 < top_region_height:
+                                result = _try_get_clickable(node, element)
+                                if result:
+                                    logger.info(f"[Strategy 4] 从 content-desc 找到店铺名: '{desc}', bounds={bounds}")
+                                    return result
 
         logger.warning(t('log.shop_name_avatar_not_found'))
         return None
