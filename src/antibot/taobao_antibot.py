@@ -22,13 +22,15 @@ class TaobaoAntiBot:
     Taobao-specific Anti-bot Manager
 
     Core features:
-    - Simulate human browsing behavior (2-5 minutes)
-    - Cycle management (3-5 tasks per cycle)
-    - Cooldown management (enter 15-minute cooldown after 3-5 cycles)
+    - Cycle management: every 3-5 tasks → enter protection mode
+    - Protection mode: 25-35 min of mixed browse simulation + device cooldown
+    - Captcha timeout: 3 min no human response → enter protection mode
+    - Kill apps after protection mode to ensure clean state
     - Device state persistence
     """
 
     TAOBAO_PACKAGE = "com.taobao.taobao"
+    RDBAO_PACKAGE = "com.a1010bao.web.rdbao"
 
     def __init__(self, adb_controller, ui_locator, config: dict = None, device_id: str = None):
         """
@@ -50,45 +52,26 @@ class TaobaoAntiBot:
 
     def _load_config(self):
         """Load config parameters."""
-        # Tasks per cycle range
+        # Tasks per cycle range (triggers protection mode)
         tasks_range = self.config.get('tasks_per_cycle', [3, 5])
         self.tasks_per_cycle_min = tasks_range[0] if isinstance(tasks_range, list) else 3
         self.tasks_per_cycle_max = tasks_range[1] if isinstance(tasks_range, list) else 5
 
-        # Cycles before cooldown range
-        cycles_range = self.config.get('cycles_before_cooldown', [3, 5])
-        self.cycles_before_cooldown_min = cycles_range[0] if isinstance(cycles_range, list) else 3
-        self.cycles_before_cooldown_max = cycles_range[1] if isinstance(cycles_range, list) else 5
-
-        # Browse simulation duration range (minutes)
+        # Browse simulation duration range (minutes) - used within protection mode segments
         browse_range = self.config.get('browse_duration_minutes', [2, 5])
         self.browse_duration_min = browse_range[0] if isinstance(browse_range, list) else 2
         self.browse_duration_max = browse_range[1] if isinstance(browse_range, list) else 5
 
-        # Cooldown duration (minutes)
-        self.cooldown_duration_minutes = self.config.get('cooldown_duration_minutes', 15)
+        # Protection mode total duration range (minutes)
+        protection_range = self.config.get('protection_duration_minutes', [25, 35])
+        self.protection_duration_min = protection_range[0] if isinstance(protection_range, list) else 25
+        self.protection_duration_max = protection_range[1] if isinstance(protection_range, list) else 35
 
         # Click offset
         self.click_offset_max_px = self.config.get('click_offset_max_px', 5)
 
-        # Time-based cooldown config
-        self.time_cooldown_interval_minutes = self.config.get('time_cooldown_interval_minutes', 30)
-        time_cooldown_range = self.config.get('time_cooldown_duration_minutes', [5, 10])
-        self.time_cooldown_duration_min = time_cooldown_range[0] if isinstance(time_cooldown_range, list) else 5
-        self.time_cooldown_duration_max = time_cooldown_range[1] if isinstance(time_cooldown_range, list) else 10
-
-        # Risk cooldown durations (minutes)
-        self.risk_cooldown_durations = self.config.get('risk_cooldown_durations', {
-            'captcha': 15,
-            'login_required': 20,
-            'blocked': 30,
-            'rate_limit': 15,
-        })
-
         # Current cycle target task count (randomly determined)
         self._current_cycle_target = random.randint(self.tasks_per_cycle_min, self.tasks_per_cycle_max)
-        # Current cooldown period target cycle count (randomly determined)
-        self._current_cooldown_target = random.randint(self.cycles_before_cooldown_min, self.cycles_before_cooldown_max)
 
     def _get_state_file_path(self) -> Path:
         """Get device-specific state file path."""
@@ -104,11 +87,8 @@ class TaobaoAntiBot:
 
         # Default state
         self.tasks_in_cycle = 0  # Tasks completed in current cycle
-        self.completed_cycles = 0  # Completed cycles count
-        self.cooldown_until: Optional[datetime] = None  # Cooldown end time
+        self.cooldown_until: Optional[datetime] = None  # Protection mode end time
         self.last_task_time: Optional[datetime] = None  # Last task time
-        self.last_time_cooldown: Optional[datetime] = None  # Last time-based cooldown
-        self.session_start_time: datetime = datetime.now()  # Session start time
 
         if not state_file.exists():
             logger.info(t('log.taobao_state_file_not_exist', path=state_file))
@@ -119,7 +99,6 @@ class TaobaoAntiBot:
                 data = json.load(f)
 
             self.tasks_in_cycle = data.get('tasks_in_cycle', 0)
-            self.completed_cycles = data.get('completed_cycles', 0)
 
             cooldown_str = data.get('cooldown_until')
             if cooldown_str:
@@ -128,28 +107,21 @@ class TaobaoAntiBot:
                 if self.cooldown_until < datetime.now():
                     logger.info(t('log.taobao_cooldown_expired_reset'))
                     self.cooldown_until = None
-                    self.completed_cycles = 0
                     self.tasks_in_cycle = 0
 
             last_task_str = data.get('last_task_time')
             if last_task_str:
                 self.last_task_time = datetime.fromisoformat(last_task_str)
 
-            last_time_cooldown_str = data.get('last_time_cooldown')
-            if last_time_cooldown_str:
-                self.last_time_cooldown = datetime.fromisoformat(last_time_cooldown_str)
-
-            # Restore target values
+            # Restore target value
             self._current_cycle_target = data.get('current_cycle_target',
                 random.randint(self.tasks_per_cycle_min, self.tasks_per_cycle_max))
-            self._current_cooldown_target = data.get('current_cooldown_target',
-                random.randint(self.cycles_before_cooldown_min, self.cycles_before_cooldown_max))
 
             logger.info(t('log.taobao_state_loaded',
                          tasks_in_cycle=self.tasks_in_cycle,
                          cycle_target=self._current_cycle_target,
-                         completed_cycles=self.completed_cycles,
-                         cooldown_target=self._current_cooldown_target,
+                         completed_cycles=0,
+                         cooldown_target=self._current_cycle_target,
                          cooling=self.is_cooling_down()))
 
         except Exception as e:
@@ -163,12 +135,9 @@ class TaobaoAntiBot:
             data = {
                 'device_id': self.device_id,
                 'tasks_in_cycle': self.tasks_in_cycle,
-                'completed_cycles': self.completed_cycles,
                 'cooldown_until': self.cooldown_until.isoformat() if self.cooldown_until else None,
                 'last_task_time': self.last_task_time.isoformat() if self.last_task_time else None,
-                'last_time_cooldown': self.last_time_cooldown.isoformat() if self.last_time_cooldown else None,
                 'current_cycle_target': self._current_cycle_target,
-                'current_cooldown_target': self._current_cooldown_target,
                 'updated_at': datetime.now().isoformat()
             }
 
@@ -183,17 +152,14 @@ class TaobaoAntiBot:
     # ==================== State Queries ====================
 
     def is_cooling_down(self) -> bool:
-        """Check if in cooldown period."""
+        """Check if in protection/cooldown period."""
         if self.cooldown_until is None:
             return False
 
         if datetime.now() >= self.cooldown_until:
-            # Cooldown ended
+            # Protection ended
             self.cooldown_until = None
-            self.completed_cycles = 0
             self.tasks_in_cycle = 0
-            self._current_cooldown_target = random.randint(
-                self.cycles_before_cooldown_min, self.cycles_before_cooldown_max)
             self._save_state()
             return False
 
@@ -216,8 +182,6 @@ class TaobaoAntiBot:
             'device_id': self.device_id,
             'tasks_in_cycle': self.tasks_in_cycle,
             'tasks_per_cycle_target': self._current_cycle_target,
-            'completed_cycles': self.completed_cycles,
-            'cycles_before_cooldown_target': self._current_cooldown_target,
             'is_cooling_down': self.is_cooling_down(),
             'remaining_seconds': remaining.total_seconds() if remaining else 0,
             'cooldown_until': self.cooldown_until.isoformat() if self.cooldown_until else None,
@@ -225,173 +189,136 @@ class TaobaoAntiBot:
 
     # ==================== Task Cycle Management ====================
 
-    def record_task_complete(self) -> Tuple[bool, bool]:
+    def record_task_done(self, success: bool = True) -> bool:
         """
-        Record task completion.
-
-        Returns:
-            (should_browse, should_cooldown) tuple
-            - should_browse: Whether to execute human browse simulation
-            - should_cooldown: Whether to enter cooldown period
-        """
-        self.tasks_in_cycle += 1
-        self.last_task_time = datetime.now()
-
-        should_browse = False
-        should_cooldown = False
-
-        # Check if current cycle is complete
-        if self.tasks_in_cycle >= self._current_cycle_target:
-            should_browse = True
-            self.completed_cycles += 1
-            self.tasks_in_cycle = 0
-            # Generate new random target for next cycle
-            self._current_cycle_target = random.randint(
-                self.tasks_per_cycle_min, self.tasks_per_cycle_max)
-
-            logger.info(t('log.taobao_cycle_complete', cycle=self.completed_cycles))
-
-            # Check if cooldown needed
-            if self.completed_cycles >= self._current_cooldown_target:
-                should_cooldown = True
-                logger.info(t('log.taobao_need_cooldown', cycles=self.completed_cycles))
-
-        self._save_state()
-        return should_browse, should_cooldown
-
-    def record_task_done(self, success: bool = True) -> Tuple[bool, bool]:
-        """
-        Record task completion (both success and failure count toward cycle).
+        Record task completion (success and failure both count).
 
         Args:
             success: Whether the task succeeded
 
         Returns:
-            (should_browse, should_cooldown) tuple
-            - For successful tasks: full cycle logic (browse + cooldown check)
-            - For failed tasks: increment counter + cooldown check only (no browse simulation)
+            True if protection mode should be triggered (cycle complete)
         """
-        if success:
-            return self.record_task_complete()
-
-        # Failed task: increment counter but skip browse simulation
         self.tasks_in_cycle += 1
         self.last_task_time = datetime.now()
 
-        should_cooldown = False
+        should_protect = False
 
         # Check if current cycle is complete
         if self.tasks_in_cycle >= self._current_cycle_target:
-            self.completed_cycles += 1
+            should_protect = True
             self.tasks_in_cycle = 0
+            # Generate new random target for next cycle
             self._current_cycle_target = random.randint(
                 self.tasks_per_cycle_min, self.tasks_per_cycle_max)
-
-            logger.info(t('log.taobao_cycle_complete', cycle=self.completed_cycles))
-
-            # Check if cooldown needed
-            if self.completed_cycles >= self._current_cooldown_target:
-                should_cooldown = True
-                logger.info(t('log.taobao_need_cooldown', cycles=self.completed_cycles))
+            logger.info(f"[{self.device_id}] Cycle complete ({self._current_cycle_target} tasks next), entering protection mode")
 
         self._save_state()
-        # should_browse=False for failed tasks (browsing in risk state is counterproductive)
-        return False, should_cooldown
+        return should_protect
 
-    def trigger_risk_cooldown(self, risk_type: str) -> int:
+    def enter_protection_mode(self, reason: str = "cycle_complete"):
         """
-        Trigger cooldown due to risk detection.
+        Enter protection mode: random 25-35 min of mixed browse simulation + device cooldown.
+
+        The total duration is split into 2-4 random segments, each randomly assigned
+        as either 'browse' (simulate human browsing) or 'cooldown' (device idle).
+
+        After protection mode ends, kill Taobao and Shishibao processes.
 
         Args:
-            risk_type: Risk type ('captcha', 'login_required', 'blocked', 'rate_limit')
-
-        Returns:
-            Cooldown duration in minutes
+            reason: Trigger reason for logging
         """
-        duration = self.risk_cooldown_durations.get(risk_type, self.cooldown_duration_minutes)
+        total_minutes = random.randint(self.protection_duration_min, self.protection_duration_max)
+        total_seconds = total_minutes * 60
 
-        self.cooldown_until = datetime.now() + timedelta(minutes=duration)
-        self.completed_cycles = 0
+        # Mark cooldown period in state (so other code knows we're busy)
+        self.cooldown_until = datetime.now() + timedelta(minutes=total_minutes)
+        self._save_state()
+
+        logger.warning("=" * 60)
+        logger.warning(f"[{self.device_id}] Entering protection mode ({reason})")
+        logger.warning(f"[{self.device_id}] Total duration: {total_minutes} min, until {self.cooldown_until.strftime('%H:%M:%S')}")
+        logger.warning("=" * 60)
+
+        # Split total time into 2-4 random segments
+        num_segments = random.randint(2, 4)
+        segment_ratios = [random.random() for _ in range(num_segments)]
+        ratio_sum = sum(segment_ratios)
+        segment_durations = [int(total_seconds * r / ratio_sum) for r in segment_ratios]
+
+        # Ensure total matches (adjust last segment)
+        segment_durations[-1] = total_seconds - sum(segment_durations[:-1])
+
+        # Randomly assign each segment as 'browse' or 'cooldown'
+        # Ensure at least one of each type
+        segment_types = ['browse', 'cooldown']
+        for _ in range(num_segments - 2):
+            segment_types.append(random.choice(['browse', 'cooldown']))
+        random.shuffle(segment_types)
+
+        for i, (seg_type, seg_duration) in enumerate(zip(segment_types, segment_durations)):
+            seg_minutes = seg_duration / 60
+            logger.info(f"[{self.device_id}] Protection segment {i+1}/{num_segments}: {seg_type} ({seg_minutes:.1f} min)")
+
+            if seg_type == 'browse':
+                self._execute_browse_segment(seg_duration)
+            else:
+                self._execute_cooldown_segment(seg_duration)
+
+        # Protection mode complete - kill apps to ensure clean state
+        logger.info(f"[{self.device_id}] Protection mode complete, killing apps for clean state")
+        self.adb.force_stop_app(self.TAOBAO_PACKAGE)
+        self.adb.force_stop_app(self.RDBAO_PACKAGE)
+
+        # Reset state
+        self.cooldown_until = None
         self.tasks_in_cycle = 0
-        self._current_cooldown_target = random.randint(
-            self.cycles_before_cooldown_min, self.cycles_before_cooldown_max)
-
-        self._save_state()
-        logger.warning(t('log.taobao_enter_cooldown',
-                        reason=f"Risk detected: {risk_type}",
-                        minutes=duration,
-                        until=self.cooldown_until))
-        return duration
-
-    def check_time_based_cooldown(self) -> bool:
-        """
-        Check and trigger time-based cooldown.
-
-        Every `time_cooldown_interval_minutes` (default 30) minutes of continuous running,
-        enter a cooldown period of `time_cooldown_duration_min` to `time_cooldown_duration_max` minutes.
-
-        Returns:
-            True if cooldown was triggered and waited, False otherwise
-        """
-        now = datetime.now()
-
-        # Determine reference time: last time cooldown or session start
-        reference_time = self.last_time_cooldown or self.session_start_time
-
-        elapsed_minutes = (now - reference_time).total_seconds() / 60
-
-        if elapsed_minutes < self.time_cooldown_interval_minutes:
-            return False
-
-        # Trigger time-based cooldown
-        duration = random.randint(self.time_cooldown_duration_min, self.time_cooldown_duration_max)
-        logger.warning("=" * 60)
-        logger.warning(t('log.taobao_enter_cooldown',
-                        reason=f"Time-based cooldown (ran {elapsed_minutes:.0f} min)",
-                        minutes=duration,
-                        until=now + timedelta(minutes=duration)))
-        logger.warning("=" * 60)
-
-        self.last_time_cooldown = now
         self._save_state()
 
-        # Sleep for cooldown duration
-        time.sleep(duration * 60)
+        logger.warning("=" * 60)
+        logger.warning(f"[{self.device_id}] Protection mode ended, resuming tasks")
+        logger.warning("=" * 60)
 
-        logger.info(f"Time-based cooldown ended, resuming tasks")
-        return True
-
-    def trigger_cooldown(self, reason: str = "cycle_complete"):
+    def _execute_browse_segment(self, duration_seconds: int):
         """
-        Trigger cooldown period.
+        Execute a browse simulation segment within protection mode.
 
         Args:
-            reason: Trigger reason
+            duration_seconds: How long to browse (seconds)
         """
-        self.cooldown_until = datetime.now() + timedelta(minutes=self.cooldown_duration_minutes)
-        self.completed_cycles = 0
-        self.tasks_in_cycle = 0
-        # Generate new random target for next cooldown period
-        self._current_cooldown_target = random.randint(
-            self.cycles_before_cooldown_min, self.cycles_before_cooldown_max)
+        # Temporarily override browse duration to match segment
+        old_min = self.browse_duration_min
+        old_max = self.browse_duration_max
+        self.browse_duration_min = duration_seconds / 60
+        self.browse_duration_max = duration_seconds / 60
 
-        self._save_state()
-        logger.warning(t('log.taobao_enter_cooldown',
-                        reason=reason,
-                        minutes=self.cooldown_duration_minutes,
-                        until=self.cooldown_until))
+        try:
+            self.simulate_human_browse()
+        except Exception as e:
+            logger.warning(f"[{self.device_id}] Browse simulation error: {e}, falling back to cooldown")
+            time.sleep(duration_seconds)
+        finally:
+            self.browse_duration_min = old_min
+            self.browse_duration_max = old_max
+
+    def _execute_cooldown_segment(self, duration_seconds: int):
+        """
+        Execute a device cooldown segment within protection mode.
+
+        Args:
+            duration_seconds: How long to idle (seconds)
+        """
+        # Kill apps during cooldown for clean idle
+        self.adb.force_stop_app(self.TAOBAO_PACKAGE)
+        logger.info(f"[{self.device_id}] Device cooling down for {duration_seconds / 60:.1f} min...")
+        time.sleep(duration_seconds)
 
     def reset_state(self):
         """Reset state."""
         self.tasks_in_cycle = 0
-        self.completed_cycles = 0
         self.cooldown_until = None
-        self.last_time_cooldown = None
-        self.session_start_time = datetime.now()
         self._current_cycle_target = random.randint(
             self.tasks_per_cycle_min, self.tasks_per_cycle_max)
-        self._current_cooldown_target = random.randint(
-            self.cycles_before_cooldown_min, self.cycles_before_cooldown_max)
         self._save_state()
         logger.info(t('log.taobao_state_reset'))
 
@@ -653,29 +580,6 @@ class TaobaoAntiBot:
         else:
             logger.warning(t('log.taobao_close_may_failed'))
         return result
-
-    def execute_cycle_end_actions(self) -> bool:
-        """
-        Execute actions after cycle ends.
-
-        Including:
-        1. Simulate human browsing
-        2. Close Taobao process
-
-        Returns:
-            Whether successful
-        """
-        logger.info("=" * 60)
-        logger.info(t('log.taobao_execute_cycle_end_actions'))
-        logger.info("=" * 60)
-
-        # Simulate human browsing
-        browse_success = self.simulate_human_browse()
-
-        # Close Taobao regardless of browse success
-        self.close_taobao()
-
-        return browse_success
 
     # ==================== Click Offset ====================
 

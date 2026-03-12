@@ -90,6 +90,13 @@ class ParallelExecutor:
         self._lock = Lock()
         self._stop_event = Event()
 
+        # Retry config
+        self.max_retries = 3
+        self.retry_delay = 60  # seconds
+
+        # Risk-related keywords (these failures should not auto-retry)
+        self._risk_keywords = ['risk_detected', 'captcha', 'login', 'blocked']
+
         # Statistics
         self.stats = {
             'start_time': None,
@@ -97,8 +104,12 @@ class ParallelExecutor:
             'total_tasks': 0,
             'completed': 0,
             'failed': 0,
+            'retried': 0,
             'devices': {}
         }
+
+        # Per-task result records
+        self._task_results: List[Dict[str, Any]] = []
 
         # Task source file
         self._source_file: Optional[str] = None
@@ -291,35 +302,75 @@ class ParallelExecutor:
             # Check stop signal
             if self._stop_event.is_set():
                 logger.info(t('log.stop_signal_received', device_id=device_id))
+                # Record remaining tasks as cancelled
+                for remaining_task in tasks[i:]:
+                    self._record_task_result(device_id, remaining_task, 'cancelled', None, 0)
                 break
-
-            # Check time-based cooldown (#5)
-            if context.antibot:
-                context.antibot.check_time_based_cooldown()
 
             logger.info(t('log.executing_task_n', device_id=device_id, current=i+1, total=len(tasks), url=task.product_url[:50]))
 
-            try:
-                success = self._execute_task(context, task, video_duration)
+            # Execute with retry
+            task_success = False
+            task_error = None
+            retry_count = 0
 
-                with self._lock:
+            for attempt in range(1 + self.max_retries):
+                if self._stop_event.is_set():
+                    break
+
+                try:
+                    success, error = self._execute_task_with_error(context, task, video_duration)
+
                     if success:
-                        completed += 1
-                        self.stats['completed'] += 1
-                        self.stats['devices'][device_id]['completed'] += 1
+                        task_success = True
+                        task_error = None
+                        break
+
+                    task_error = error or "Unknown error"
+
+                    # Check if this is a risk-related failure (don't auto-retry)
+                    if error:
+                        error_lower = str(error).lower()
+                        is_risk = any(k in error_lower for k in self._risk_keywords)
+                        if is_risk:
+                            logger.warning(f"[{device_id}] Risk-related failure, skipping retry: {error}")
+                            break
+
+                    # Check if we have retries left
+                    if attempt < self.max_retries:
+                        retry_count += 1
+                        with self._lock:
+                            self.stats['retried'] += 1
+                        logger.warning(f"[{device_id}] Task failed, retrying ({retry_count}/{self.max_retries}) after {self.retry_delay}s: {error}")
+                        time.sleep(self.retry_delay)
                     else:
-                        failed += 1
-                        self.stats['failed'] += 1
-                        self.stats['devices'][device_id]['failed'] += 1
+                        logger.error(f"[{device_id}] Task failed after {self.max_retries} retries: {error}")
 
-                self.dispatcher.record_task_complete(device_id, success)
+                except Exception as e:
+                    task_error = str(e)
+                    logger.error(t('log.task_execution_exception', device_id=device_id, error=e))
+                    if attempt < self.max_retries:
+                        retry_count += 1
+                        with self._lock:
+                            self.stats['retried'] += 1
+                        logger.warning(f"[{device_id}] Task exception, retrying ({retry_count}/{self.max_retries}) after {self.retry_delay}s")
+                        time.sleep(self.retry_delay)
 
-            except Exception as e:
-                logger.error(t('log.task_execution_exception', device_id=device_id, error=e))
-                with self._lock:
+            # Record result
+            status = 'completed' if task_success else 'failed'
+            self._record_task_result(device_id, task, status, task_error, retry_count)
+
+            with self._lock:
+                if task_success:
+                    completed += 1
+                    self.stats['completed'] += 1
+                    self.stats['devices'][device_id]['completed'] += 1
+                else:
                     failed += 1
                     self.stats['failed'] += 1
                     self.stats['devices'][device_id]['failed'] += 1
+
+            self.dispatcher.record_task_complete(device_id, task_success)
 
             # Delay between tasks (not needed for last task)
             if i < len(tasks) - 1 and not self._stop_event.is_set():
@@ -332,12 +383,12 @@ class ParallelExecutor:
 
         return {'completed': completed, 'failed': failed}
 
-    def _execute_task(
+    def _execute_task_with_error(
         self,
         context: DeviceWorkerContext,
         task: Task,
         video_duration: int
-    ) -> bool:
+    ) -> tuple:
         """
         Execute single task.
 
@@ -347,7 +398,7 @@ class ParallelExecutor:
             video_duration: Video recording duration
 
         Returns:
-            Whether successful
+            (success: bool, error: str or None)
         """
         device_id = context.device_id
         adb = context.adb
@@ -385,13 +436,14 @@ class ParallelExecutor:
             # Check cooldown status
             if antibot and antibot.is_cooling_down():
                 remaining = antibot.get_remaining_cooldown()
-                logger.warning(t('log.device_in_cooldown_waiting', device_id=device_id, seconds=int(remaining.total_seconds())))
-                time.sleep(remaining.total_seconds())
+                if remaining and remaining.total_seconds() > 0:
+                    logger.warning(t('log.device_in_cooldown_waiting', device_id=device_id, seconds=int(remaining.total_seconds())))
+                    time.sleep(remaining.total_seconds())
 
             # Environment check
             if not adb.check_connection():
                 logger.error(t('log.device_connection_error', device_id=device_id))
-                return False
+                return False, "Device connection error"
 
             adb.wake_screen()
 
@@ -401,13 +453,13 @@ class ParallelExecutor:
 
             if not recorder.start_recording():
                 logger.error(t('log.device_start_recording_failed', device_id=device_id))
-                return False
+                return False, "Failed to start recording"
             recording_started = True
 
             # Display Beijing time
             if not adb.open_url("https://www.beijing-time.org/"):
                 self._cancel_recording(recorder, recording_started)
-                return False
+                return False, "Failed to open Beijing time page"
             time.sleep(5)
             click_screenshot_button()
             time.sleep(5)
@@ -424,65 +476,58 @@ class ParallelExecutor:
                     if not success:
                         logger.error(t('log.device_platform_failed', device_id=device_id, error=error))
 
-                        # #3: Check if failure is risk-related and trigger cooldown
+                        # Check if failure is risk-related and send captcha notification
                         if antibot and error:
                             error_lower = str(error).lower()
-                            risk_type = None
-                            if 'risk_detected' in error_lower or 'captcha' in error_lower:
-                                risk_type = 'captcha'
-                            elif 'login' in error_lower:
-                                risk_type = 'login_required'
-                            elif 'blocked' in error_lower:
-                                risk_type = 'blocked'
+                            is_risk = any(k in error_lower for k in ['risk_detected', 'captcha', 'login', 'blocked'])
 
-                            if risk_type:
-                                duration = antibot.trigger_risk_cooldown(risk_type)
-                                logger.warning(f"[{device_id}] Risk detected ({risk_type}), entering {duration} min cooldown")
-                                # Send notification
+                            if is_risk:
+                                # Send blocking notification (waits up to 3 min for human)
+                                human_confirmed = False
                                 try:
                                     from core.notifier import notify_captcha
-                                    notify_captcha(device_id=device_id, sound=True)
+                                    human_confirmed = notify_captcha(device_id=device_id, sound=True)
                                 except Exception as ne:
                                     logger.warning(f"[{device_id}] Failed to send notification: {ne}")
 
+                                if human_confirmed:
+                                    logger.info(f"[{device_id}] Human confirmed captcha handled, continuing")
+                                else:
+                                    # Timeout - enter protection mode
+                                    logger.warning(f"[{device_id}] No human response, entering protection mode")
+                                    antibot.enter_protection_mode(reason="captcha_timeout")
+
                         self._cancel_recording(recorder, recording_started)
-                        return False
+                        return False, error
                 except Exception as e:
                     logger.error(t('log.device_platform_exception', device_id=device_id, error=e))
                     self._cancel_recording(recorder, recording_started)
-                    return False
+                    return False, str(e)
 
             # Stop recording
             if not recorder.stop_recording():
                 logger.error(t('log.device_stop_recording_failed', device_id=device_id))
-                return False
+                return False, "Failed to stop recording"
 
             adb.disable_visual_feedback()
 
             task_success = True
-            return True
+            return True, None
 
         except Exception as e:
             logger.error(t('log.device_task_exception', device_id=device_id, error=e))
             self._cancel_recording(recorder, recording_started)
-            return False
+            return False, str(e)
 
         finally:
-            # #2: Record task completion for both success and failure
+            # Record task completion and check if protection mode needed
             if antibot:
                 is_taobao = any(k in task.product_url.lower() for k in ['taobao', 'tmall', 'tb.cn'])
                 if is_taobao:
                     try:
-                        should_browse, should_cooldown = antibot.record_task_done(success=task_success)
-                        if task_success:
-                            if should_browse:
-                                antibot.execute_cycle_end_actions()
-                            if should_cooldown:
-                                antibot.trigger_cooldown("Completed multiple cycles")
-                                antibot.close_taobao()
-                        elif should_cooldown:
-                            antibot.trigger_cooldown("Completed multiple cycles (with failures)")
-                            antibot.close_taobao()
+                        should_protect = antibot.record_task_done(success=task_success)
+                        if should_protect:
+                            antibot.enter_protection_mode(reason="cycle_complete")
                     except Exception as e:
                         logger.error(f"[{device_id}] AntiBot recording exception: {e}")
 
@@ -498,6 +543,38 @@ class ParallelExecutor:
             except Exception:
                 pass
 
+    def _record_task_result(
+        self,
+        device_id: str,
+        task: Task,
+        status: str,
+        error: Optional[str],
+        retry_count: int
+    ):
+        """
+        Record per-task execution result.
+
+        Args:
+            device_id: Device ID
+            task: Task object
+            status: Result status ('completed', 'failed', 'cancelled')
+            error: Error message (if failed)
+            retry_count: Number of retries attempted
+        """
+        record = {
+            'task_id': task.id,
+            'url': task.product_url,
+            'device_id': device_id,
+            'status': status,
+            'retry_count': retry_count,
+            'timestamp': datetime.now().isoformat(),
+        }
+        if error:
+            record['error'] = error
+
+        with self._lock:
+            self._task_results.append(record)
+
     def _finalize_stats(self):
         """Finalize statistics"""
         logger.info("=" * 60)
@@ -506,6 +583,7 @@ class ParallelExecutor:
         logger.info(t('log.total_tasks', count=self.stats['total_tasks']))
         logger.info(t('log.success_count', count=self.stats['completed']))
         logger.info(t('log.failed_count', count=self.stats['failed']))
+        logger.info(f"  Retried: {self.stats.get('retried', 0)}")
 
         if self.stats['start_time'] and self.stats['end_time']:
             start = datetime.fromisoformat(self.stats['start_time'])
@@ -518,6 +596,15 @@ class ParallelExecutor:
         for device_id, device_stats in self.stats['devices'].items():
             logger.info(t('log.device_stat_line', device_id=device_id, total=device_stats['total'],
                          completed=device_stats['completed'], failed=device_stats['failed']))
+
+        # Log failed tasks summary
+        failed_tasks = [r for r in self._task_results if r['status'] == 'failed']
+        if failed_tasks:
+            logger.info("-" * 40)
+            logger.info(f"Failed tasks ({len(failed_tasks)}):")
+            for r in failed_tasks:
+                logger.info(f"  [{r['device_id']}] {r['url'][:60]} | retries={r['retry_count']} | {r.get('error', 'N/A')}")
+
         logger.info("=" * 60)
 
     def generate_report(self, output_dir: str = None) -> str:
@@ -556,9 +643,11 @@ class ParallelExecutor:
                 'total_tasks': self.stats['total_tasks'],
                 'completed': self.stats['completed'],
                 'failed': self.stats['failed'],
+                'retried': self.stats.get('retried', 0),
                 'duration_seconds': duration_seconds,
             },
             'devices': self.stats['devices'],
+            'tasks': self._task_results,
             'dispatcher': self.dispatcher.get_statistics()
         }
 

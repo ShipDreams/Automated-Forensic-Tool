@@ -109,7 +109,7 @@ class CrossPlatformNotifier:
             result = subprocess.run(
                 ["osascript", "-e", script],
                 capture_output=True,
-                timeout=300  # 5 minutes timeout for user to respond
+                timeout=180  # 3 minutes timeout for user to respond
             )
 
             if result.returncode == 0:
@@ -142,7 +142,7 @@ class CrossPlatformNotifier:
                     ["zenity", "--info", "--title", title, "--text", message,
                      "--width", "400", "--height", "200"],
                     capture_output=True,
-                    timeout=300  # 5 minutes timeout
+                    timeout=180  # 3 minutes timeout
                 )
                 if result.returncode == 0:
                     logger.info(t('notify.send_success'))
@@ -177,24 +177,52 @@ class CrossPlatformNotifier:
             return False
 
     def _notify_windows(self, title: str, message: str, timeout: int = 10) -> bool:
-        """Send blocking notification on Windows using MessageBox."""
+        """
+        Send blocking notification on Windows using MessageBoxTimeoutW.
+
+        Uses undocumented but widely available MessageBoxTimeoutW API for 3-minute timeout.
+        Returns True if user clicked OK, False if timed out or failed.
+        """
         try:
             import ctypes
+
             # Play sound in background
             sound_thread = threading.Thread(target=self._play_sound, daemon=True)
             sound_thread.start()
 
-            # MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND
+            # MB_OK | MB_ICONERROR (red X icon) | MB_TOPMOST | MB_SETFOREGROUND
             MB_OK = 0x00000000
-            MB_ICONWARNING = 0x00000030
+            MB_ICONERROR = 0x00000010
             MB_TOPMOST = 0x00040000
             MB_SETFOREGROUND = 0x00010000
-            flags = MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND
+            flags = MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND
 
-            # Blocking call - waits for user to click OK
-            ctypes.windll.user32.MessageBoxW(0, message, title, flags)
-            logger.info(t('notify.send_success'))
-            return True
+            TIMEOUT_MS = 180000  # 3 minutes in milliseconds
+            IDTIMEOUT = 32000
+
+            # Try MessageBoxTimeoutW first (available on Windows XP+)
+            try:
+                MessageBoxTimeoutW = ctypes.windll.user32.MessageBoxTimeoutW
+                MessageBoxTimeoutW.argtypes = [
+                    ctypes.c_void_p, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                    ctypes.c_uint, ctypes.c_ushort, ctypes.c_ulong
+                ]
+                MessageBoxTimeoutW.restype = ctypes.c_int
+
+                result = MessageBoxTimeoutW(0, message, title, flags, 0, TIMEOUT_MS)
+
+                if result == IDTIMEOUT:
+                    logger.warning("Captcha dialog timed out (3 min), no human response")
+                    return False
+                else:
+                    logger.info(t('notify.send_success'))
+                    return True
+
+            except AttributeError:
+                # MessageBoxTimeoutW not available, fallback to regular MessageBoxW with thread timeout
+                logger.warning("MessageBoxTimeoutW not available, using thread-based timeout")
+                return self._notify_windows_thread_fallback(title, message, flags, TIMEOUT_MS // 1000)
+
         except Exception as e:
             logger.warning(t('notify.send_failed', error=str(e)))
 
@@ -203,6 +231,27 @@ class CrossPlatformNotifier:
         sound_thread = threading.Thread(target=self._play_sound, daemon=True)
         sound_thread.start()
         return False
+
+    def _notify_windows_thread_fallback(self, title: str, message: str, flags: int, timeout_sec: int) -> bool:
+        """Fallback: run MessageBoxW in a thread with timeout."""
+        import ctypes
+
+        result_holder = [None]
+
+        def show_dialog():
+            result_holder[0] = ctypes.windll.user32.MessageBoxW(0, message, title, flags)
+
+        dialog_thread = threading.Thread(target=show_dialog, daemon=True)
+        dialog_thread.start()
+        dialog_thread.join(timeout=timeout_sec)
+
+        if dialog_thread.is_alive():
+            # Timeout - dialog still open, no human response
+            logger.warning("Captcha dialog timed out (3 min), no human response")
+            return False
+        else:
+            logger.info(t('notify.send_success'))
+            return True
 
     def _terminal_bell(self):
         """Play terminal bell as fallback notification."""
@@ -269,13 +318,16 @@ class CrossPlatformNotifier:
         self._terminal_bell()
 
     def _play_sound_windows(self):
-        """Play sound on Windows using winsound."""
+        """Play alarm sound on Windows using winsound (loud, repeating, hard to miss)."""
         try:
             import winsound
-            # Play system beep: frequency=1000Hz, duration=500ms
-            winsound.Beep(1000, 500)
+            # Alarm pattern: ascending frequency sweep, 2 rounds (~3 seconds total)
+            for _ in range(2):
+                winsound.Beep(800, 300)
+                winsound.Beep(1200, 300)
+                winsound.Beep(1600, 300)
+                winsound.Beep(2000, 200)
         except ImportError:
-            # winsound not available, use terminal bell
             self._terminal_bell()
         except Exception:
             self._terminal_bell()
@@ -284,12 +336,15 @@ class CrossPlatformNotifier:
         """
         Convenience method to notify about captcha detection.
 
+        Blocks until user confirms or timeout (3 min).
+
         Args:
             device_id: Device identifier that encountered captcha
             sound: Whether to play sound
 
         Returns:
-            Whether notification was sent successfully
+            True: User confirmed (captcha handled), can continue
+            False: Timeout or failed (no human response), should enter protection mode
         """
         title = t('notify.captcha_title')
         message = t('notify.captcha_message', device_id=device_id)
@@ -320,12 +375,15 @@ def notify_captcha(device_id: str, sound: bool = True) -> bool:
     """
     Convenience function to send captcha notification.
 
+    Blocks until user confirms or timeout (3 min).
+
     Args:
         device_id: Device identifier that encountered captcha
         sound: Whether to play sound
 
     Returns:
-        Whether notification was sent successfully
+        True: User confirmed (captcha handled), can continue
+        False: Timeout or failed (no human response), should enter protection mode
     """
     notifier = get_notifier()
     return notifier.notify_captcha(device_id=device_id, sound=sound)

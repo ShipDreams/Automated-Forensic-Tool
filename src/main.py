@@ -446,8 +446,8 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
     Batch mode: Load tasks from file and execute sequentially.
 
     Supports Taobao-specific anti-detection strategy:
-    - Execute human browsing simulation every 3-5 tasks
-    - Enter 15-minute cooldown after 3-5 cycles
+    - Enter protection mode every 3-5 tasks (mixed browse simulation + cooldown)
+    - Enter protection mode on captcha timeout (3 min no human response)
 
     Args:
         task_file: Task file path (JSON/CSV/TXT)
@@ -481,18 +481,16 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
             )
             logger.info(t('log.taobao_antibot_enabled'))
             status = taobao_antibot.get_status()
-            logger.info(t('log.antibot_status', current=status['tasks_in_cycle'],
-                         target=status['tasks_per_cycle_target'],
-                         cycles=status['completed_cycles'],
-                         cycles_target=status['cycles_before_cooldown_target']))
+            logger.info(f"[AntiBot] tasks_in_cycle={status['tasks_in_cycle']}/{status['tasks_per_cycle_target']}, cooling={status['is_cooling_down']}")
 
             # Check if in cooldown period
             if taobao_antibot.is_cooling_down():
                 remaining = taobao_antibot.get_remaining_cooldown()
-                logger.warning(t('log.device_in_cooldown', seconds=int(remaining.total_seconds())))
-                logger.info(t('log.waiting_cooldown'))
-                time.sleep(remaining.total_seconds())
-                logger.info(t('log.cooldown_ended'))
+                if remaining and remaining.total_seconds() > 0:
+                    logger.warning(t('log.device_in_cooldown', seconds=int(remaining.total_seconds())))
+                    logger.info(t('log.waiting_cooldown'))
+                    time.sleep(remaining.total_seconds())
+                    logger.info(t('log.cooldown_ended'))
 
         except Exception as e:
             logger.warning(t('log.taobao_antibot_init_failed', error=e))
@@ -514,67 +512,51 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
         # Check cooldown status
         if taobao_antibot and taobao_antibot.is_cooling_down():
             remaining = taobao_antibot.get_remaining_cooldown()
-            logger.warning(t('log.in_cooldown_waiting', seconds=int(remaining.total_seconds())))
-            logger.info(t('log.waiting_cooldown'))
-            time.sleep(remaining.total_seconds())
-            logger.info(t('log.cooldown_ended'))
-
-        # #5: Check time-based cooldown
-        if taobao_antibot:
-            taobao_antibot.check_time_based_cooldown()
+            if remaining and remaining.total_seconds() > 0:
+                logger.warning(t('log.in_cooldown_waiting', seconds=int(remaining.total_seconds())))
+                logger.info(t('log.waiting_cooldown'))
+                time.sleep(remaining.total_seconds())
+                logger.info(t('log.cooldown_ended'))
 
         success, error = collector.run_full_process(
             product_url=task.product_url,
             video_play_duration=task.video_duration or video_duration
         )
 
-        # #2: Record task completion (count both success and failure)
+        # Record task completion and handle protection mode
         try:
             if taobao_antibot:
                 # Detect if Taobao link
                 is_taobao = 'taobao' in task.product_url.lower() or 'tmall' in task.product_url.lower() or 'tb.cn' in task.product_url.lower()
                 logger.info(t('log.antibot_check', is_taobao=is_taobao, url=task.product_url[:50]))
                 if is_taobao:
-                    should_browse, should_cooldown = taobao_antibot.record_task_done(success=success)
+                    should_protect = taobao_antibot.record_task_done(success=success)
                     status = taobao_antibot.get_status()
-                    logger.info(t('log.antibot_status_detail',
-                                 current=status['tasks_in_cycle'],
-                                 target=status['tasks_per_cycle_target'],
-                                 cycles=status['completed_cycles'],
-                                 cycles_target=status['cycles_before_cooldown_target'],
-                                 browse=should_browse, cooldown=should_cooldown))
+                    logger.info(f"[AntiBot] tasks_in_cycle={status['tasks_in_cycle']}/{status['tasks_per_cycle_target']}, should_protect={should_protect}")
 
-                    if should_browse and success:
-                        logger.info("=" * 60)
-                        logger.info(t('log.trigger_cycle_end'))
-                        logger.info("=" * 60)
-                        taobao_antibot.execute_cycle_end_actions()
+                    if should_protect:
+                        taobao_antibot.enter_protection_mode(reason="cycle_complete")
 
-                    if should_cooldown:
-                        taobao_antibot.trigger_cooldown("Completed multiple cycles")
-                        # Close Taobao process
-                        taobao_antibot.close_taobao()
-
-                    # #3: Check if failure is risk-related
+                    # Check if failure is risk-related
                     if not success and error:
                         error_lower = str(error).lower()
-                        risk_type = None
-                        if 'risk_detected' in error_lower or 'captcha' in error_lower:
-                            risk_type = 'captcha'
-                        elif 'login' in error_lower:
-                            risk_type = 'login_required'
-                        elif 'blocked' in error_lower:
-                            risk_type = 'blocked'
+                        is_risk = any(k in error_lower for k in ['risk_detected', 'captcha', 'login', 'blocked'])
 
-                        if risk_type:
-                            duration = taobao_antibot.trigger_risk_cooldown(risk_type)
-                            logger.warning(f"Risk detected ({risk_type}), entering {duration} min cooldown")
-                            # Send notification
+                        if is_risk:
+                            # Send blocking notification (waits up to 3 min for human)
+                            human_confirmed = False
                             try:
                                 from core.notifier import notify_captcha
-                                notify_captcha(device_id=collector.adb.device_id or "unknown", sound=True)
+                                human_confirmed = notify_captcha(device_id=collector.adb.device_id or "unknown", sound=True)
                             except Exception as ne:
                                 logger.warning(f"Failed to send notification: {ne}")
+
+                            if human_confirmed:
+                                logger.info("Human confirmed captcha handled, continuing")
+                            else:
+                                # Timeout - enter protection mode
+                                logger.warning("No human response, entering protection mode")
+                                taobao_antibot.enter_protection_mode(reason="captcha_timeout")
             else:
                 logger.warning(t('log.antibot_not_enabled'))
         except Exception as e:
