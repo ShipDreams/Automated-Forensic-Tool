@@ -190,15 +190,16 @@ class CrossPlatformNotifier:
             sound_thread = threading.Thread(target=self._play_sound, daemon=True)
             sound_thread.start()
 
-            # MB_OK | MB_ICONERROR (red X icon) | MB_TOPMOST | MB_SETFOREGROUND
-            MB_OK = 0x00000000
+            # MB_OKCANCEL | MB_ICONERROR (red X icon) | MB_TOPMOST | MB_SETFOREGROUND
+            # Use OKCANCEL so timeout returns IDTIMEOUT (32000) instead of IDOK (1)
+            MB_OKCANCEL = 0x00000001
             MB_ICONERROR = 0x00000010
             MB_TOPMOST = 0x00040000
             MB_SETFOREGROUND = 0x00010000
-            flags = MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND
+            flags = MB_OKCANCEL | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND
 
             TIMEOUT_MS = 180000  # 3 minutes in milliseconds
-            IDTIMEOUT = 32000
+            IDOK = 1
 
             # Try MessageBoxTimeoutW first (available on Windows XP+)
             try:
@@ -211,12 +212,13 @@ class CrossPlatformNotifier:
 
                 result = MessageBoxTimeoutW(0, message, title, flags, 0, TIMEOUT_MS)
 
-                if result == IDTIMEOUT:
-                    logger.warning("Captcha dialog timed out (3 min), no human response")
-                    return False
-                else:
-                    logger.info(t('notify.send_success'))
+                if result == IDOK:
+                    logger.info("Human clicked OK (captcha handled)")
                     return True
+                else:
+                    # IDCANCEL (2) = user clicked Cancel, IDTIMEOUT (32000) = timed out
+                    logger.warning(f"Captcha dialog closed without OK (result={result})")
+                    return False
 
             except AttributeError:
                 # MessageBoxTimeoutW not available, fallback to regular MessageBoxW with thread timeout
@@ -236,6 +238,7 @@ class CrossPlatformNotifier:
         """Fallback: run MessageBoxW in a thread with timeout."""
         import ctypes
 
+        IDOK = 1
         result_holder = [None]
 
         def show_dialog():
@@ -249,9 +252,12 @@ class CrossPlatformNotifier:
             # Timeout - dialog still open, no human response
             logger.warning("Captcha dialog timed out (3 min), no human response")
             return False
-        else:
-            logger.info(t('notify.send_success'))
+        elif result_holder[0] == IDOK:
+            logger.info("Human clicked OK (captcha handled)")
             return True
+        else:
+            logger.warning(f"Captcha dialog closed without OK (result={result_holder[0]})")
+            return False
 
     def _terminal_bell(self):
         """Play terminal bell as fallback notification."""

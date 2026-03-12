@@ -493,7 +493,7 @@ class ParallelExecutor:
                                 if human_confirmed:
                                     logger.info(f"[{device_id}] Human confirmed captcha handled, continuing")
                                 else:
-                                    # Timeout - enter protection mode
+                                    # Timeout or cancelled - enter protection mode
                                     logger.warning(f"[{device_id}] No human response, entering protection mode")
                                     antibot.enter_protection_mode(reason="captcha_timeout")
 
