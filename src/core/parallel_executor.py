@@ -372,6 +372,9 @@ class ParallelExecutor:
 
             self.dispatcher.record_task_complete(device_id, task_success)
 
+            # Save realtime report after each task
+            self._save_realtime_report()
+
             # Delay between tasks (not needed for last task)
             if i < len(tasks) - 1 and not self._stop_event.is_set():
                 logger.info(t('log.waiting_between_tasks', device_id=device_id, seconds=delay_between_tasks))
@@ -574,6 +577,41 @@ class ParallelExecutor:
 
         with self._lock:
             self._task_results.append(record)
+
+    def _save_realtime_report(self):
+        """
+        Save realtime report to a fixed file after each task completion.
+
+        This file is overwritten each time so that even if the process is
+        force-killed, completed task records are preserved on disk.
+        """
+        try:
+            reports_dir = Path(__file__).parent.parent / 'reports'
+            reports_dir.mkdir(parents=True, exist_ok=True)
+            report_file = reports_dir / 'parallel_report_latest.json'
+
+            with self._lock:
+                report = {
+                    'report_time': datetime.now().isoformat(),
+                    'source_file': self._source_file,
+                    'execution_mode': 'parallel',
+                    'status': 'in_progress',
+                    'summary': {
+                        'total_devices': len(self._device_ids),
+                        'total_tasks': self.stats['total_tasks'],
+                        'completed': self.stats['completed'],
+                        'failed': self.stats['failed'],
+                        'retried': self.stats.get('retried', 0),
+                    },
+                    'devices': dict(self.stats['devices']),
+                    'tasks': list(self._task_results),
+                }
+
+            with open(report_file, 'w', encoding='utf-8') as f:
+                json.dump(report, f, ensure_ascii=False, indent=2)
+
+        except Exception as e:
+            logger.warning(f"Failed to save realtime report: {e}")
 
     def _finalize_stats(self):
         """Finalize statistics"""
