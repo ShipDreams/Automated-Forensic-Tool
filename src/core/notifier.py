@@ -128,9 +128,32 @@ class CrossPlatformNotifier:
             return False
 
     def _notify_linux(self, title: str, message: str) -> bool:
-        """Send notification on Linux using notify-send."""
+        """Send blocking notification on Linux using zenity (fallback to notify-send)."""
         try:
             import subprocess
+
+            # Play sound in background
+            sound_thread = threading.Thread(target=self._play_sound, daemon=True)
+            sound_thread.start()
+
+            # Try zenity first (blocking dialog)
+            try:
+                result = subprocess.run(
+                    ["zenity", "--info", "--title", title, "--text", message,
+                     "--width", "400", "--height", "200"],
+                    capture_output=True,
+                    timeout=300  # 5 minutes timeout
+                )
+                if result.returncode == 0:
+                    logger.info(t('notify.send_success'))
+                    return True
+            except FileNotFoundError:
+                pass  # zenity not installed, try next
+            except subprocess.TimeoutExpired:
+                logger.warning(t('notify.send_failed', error="Dialog timeout"))
+                return False
+
+            # Fallback: notify-send (non-blocking, but better than nothing)
             result = subprocess.run(
                 ["notify-send", "-u", "critical", title, message],
                 capture_output=True,
@@ -139,16 +162,13 @@ class CrossPlatformNotifier:
 
             if result.returncode == 0:
                 logger.info(t('notify.send_success'))
-                # Play sound separately on Linux
-                sound_thread = threading.Thread(target=self._play_sound, daemon=True)
-                sound_thread.start()
                 return True
             else:
                 logger.warning(t('notify.send_failed', error="notify-send failed"))
                 return False
 
         except FileNotFoundError:
-            logger.warning(t('notify.send_failed', error="notify-send not installed"))
+            logger.warning(t('notify.send_failed', error="zenity/notify-send not installed"))
             self._terminal_bell()
             return False
         except Exception as e:
@@ -157,23 +177,26 @@ class CrossPlatformNotifier:
             return False
 
     def _notify_windows(self, title: str, message: str, timeout: int = 10) -> bool:
-        """Send notification on Windows using plyer."""
-        if self._plyer_available:
-            try:
-                from plyer import notification
-                notification.notify(
-                    title=title,
-                    message=message,
-                    timeout=timeout,
-                    app_name="Forensic Tool"
-                )
-                logger.info(t('notify.send_success'))
-                # Play sound separately
-                sound_thread = threading.Thread(target=self._play_sound, daemon=True)
-                sound_thread.start()
-                return True
-            except Exception as e:
-                logger.warning(t('notify.send_failed', error=str(e)))
+        """Send blocking notification on Windows using MessageBox."""
+        try:
+            import ctypes
+            # Play sound in background
+            sound_thread = threading.Thread(target=self._play_sound, daemon=True)
+            sound_thread.start()
+
+            # MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND
+            MB_OK = 0x00000000
+            MB_ICONWARNING = 0x00000030
+            MB_TOPMOST = 0x00040000
+            MB_SETFOREGROUND = 0x00010000
+            flags = MB_OK | MB_ICONWARNING | MB_TOPMOST | MB_SETFOREGROUND
+
+            # Blocking call - waits for user to click OK
+            ctypes.windll.user32.MessageBoxW(0, message, title, flags)
+            logger.info(t('notify.send_success'))
+            return True
+        except Exception as e:
+            logger.warning(t('notify.send_failed', error=str(e)))
 
         # Fallback: terminal bell and sound
         self._terminal_bell()

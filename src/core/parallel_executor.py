@@ -254,7 +254,7 @@ class ParallelExecutor:
 
         self.stats['end_time'] = datetime.now().isoformat()
 
-        # Finalize statistics
+        # Finalize statistics (always runs, even after interruption)
         self._finalize_stats()
 
         return self.stats
@@ -292,6 +292,10 @@ class ParallelExecutor:
             if self._stop_event.is_set():
                 logger.info(t('log.stop_signal_received', device_id=device_id))
                 break
+
+            # Check time-based cooldown (#5)
+            if context.antibot:
+                context.antibot.check_time_based_cooldown()
 
             logger.info(t('log.executing_task_n', device_id=device_id, current=i+1, total=len(tasks), url=task.product_url[:50]))
 
@@ -419,8 +423,28 @@ class ParallelExecutor:
                     )
                     if not success:
                         logger.error(t('log.device_platform_failed', device_id=device_id, error=error))
-                        if antibot:
-                            antibot.record_task_done(success=False)
+
+                        # #3: Check if failure is risk-related and trigger cooldown
+                        if antibot and error:
+                            error_lower = str(error).lower()
+                            risk_type = None
+                            if 'risk_detected' in error_lower or 'captcha' in error_lower:
+                                risk_type = 'captcha'
+                            elif 'login' in error_lower:
+                                risk_type = 'login_required'
+                            elif 'blocked' in error_lower:
+                                risk_type = 'blocked'
+
+                            if risk_type:
+                                duration = antibot.trigger_risk_cooldown(risk_type)
+                                logger.warning(f"[{device_id}] Risk detected ({risk_type}), entering {duration} min cooldown")
+                                # Send notification
+                                try:
+                                    from core.notifier import notify_captcha
+                                    notify_captcha(device_id=device_id, sound=True)
+                                except Exception as ne:
+                                    logger.warning(f"[{device_id}] Failed to send notification: {ne}")
+
                         self._cancel_recording(recorder, recording_started)
                         return False
                 except Exception as e:
@@ -435,17 +459,6 @@ class ParallelExecutor:
 
             adb.disable_visual_feedback()
 
-            # Anti-detection handling
-            if antibot:
-                is_taobao = any(k in task.product_url.lower() for k in ['taobao', 'tmall', 'tb.cn'])
-                if is_taobao:
-                    should_browse, should_cooldown = antibot.record_task_complete()
-                    if should_browse:
-                        antibot.execute_cycle_end_actions()
-                    if should_cooldown:
-                        antibot.trigger_cooldown("Completed multiple cycles")
-                        antibot.close_taobao()
-
             task_success = True
             return True
 
@@ -455,6 +468,24 @@ class ParallelExecutor:
             return False
 
         finally:
+            # #2: Record task completion for both success and failure
+            if antibot:
+                is_taobao = any(k in task.product_url.lower() for k in ['taobao', 'tmall', 'tb.cn'])
+                if is_taobao:
+                    try:
+                        should_browse, should_cooldown = antibot.record_task_done(success=task_success)
+                        if task_success:
+                            if should_browse:
+                                antibot.execute_cycle_end_actions()
+                            if should_cooldown:
+                                antibot.trigger_cooldown("Completed multiple cycles")
+                                antibot.close_taobao()
+                        elif should_cooldown:
+                            antibot.trigger_cooldown("Completed multiple cycles (with failures)")
+                            antibot.close_taobao()
+                    except Exception as e:
+                        logger.error(f"[{device_id}] AntiBot recording exception: {e}")
+
             # Always close apps to ensure clean state for next task
             adb.force_stop_app("com.taobao.taobao")
             adb.force_stop_app("com.a1010bao.web.rdbao")
@@ -593,6 +624,7 @@ def run_parallel_mode(
     }
     dispatch_strategy = strategy_map.get(strategy, DispatchStrategy.ROUND_ROBIN)
 
+    executor = None
     try:
         executor = ParallelExecutor(
             device_ids=device_ids,
@@ -613,14 +645,28 @@ def run_parallel_mode(
             video_duration=video_duration
         )
 
-        # Generate report
-        executor.generate_report()
-
         return stats.get('failed', 0) == 0
+
+    except KeyboardInterrupt:
+        logger.warning(t('log.user_interrupt_stopping'))
+        if executor:
+            executor._stop_event.set()
+        return False
 
     except Exception as e:
         logger.error(t('log.parallel_execution_failed', error=e))
         return False
+
+    finally:
+        # #4: Always generate report, even on early exit
+        if executor:
+            try:
+                if not executor.stats.get('end_time'):
+                    executor.stats['end_time'] = datetime.now().isoformat()
+                    executor._finalize_stats()
+                executor.generate_report()
+            except Exception as e:
+                logger.error(f"Failed to generate report: {e}")
 
 
 if __name__ == "__main__":

@@ -260,6 +260,9 @@ class BasePlatformHandler(ABC):
         # Risk check
         if not self._check_risk():
             logger.warning(t('log.risk_detected'))
+            error = "RISK_DETECTED: Platform risk control triggered (captcha/login required)"
+            logger.error(error)
+            return False, error
 
         # Step 4+5: Video playback (unmute + replay from start)
         # Prefer replay_video_from_start (Taobao), otherwise use old unmute + play

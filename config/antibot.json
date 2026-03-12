@@ -39,6 +39,14 @@
     "cycles_before_cooldown": [3, 5],
     "browse_duration_minutes": [2, 5],
     "cooldown_duration_minutes": 15,
-    "click_offset_max_px": 5
+    "click_offset_max_px": 5,
+    "time_cooldown_interval_minutes": 30,
+    "time_cooldown_duration_minutes": [5, 10],
+    "risk_cooldown_durations": {
+      "captcha": 15,
+      "login_required": 20,
+      "blocked": 30,
+      "rate_limit": 15
+    }
   }
 }

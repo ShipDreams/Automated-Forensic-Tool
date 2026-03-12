@@ -71,6 +71,20 @@ class TaobaoAntiBot:
         # Click offset
         self.click_offset_max_px = self.config.get('click_offset_max_px', 5)
 
+        # Time-based cooldown config
+        self.time_cooldown_interval_minutes = self.config.get('time_cooldown_interval_minutes', 30)
+        time_cooldown_range = self.config.get('time_cooldown_duration_minutes', [5, 10])
+        self.time_cooldown_duration_min = time_cooldown_range[0] if isinstance(time_cooldown_range, list) else 5
+        self.time_cooldown_duration_max = time_cooldown_range[1] if isinstance(time_cooldown_range, list) else 10
+
+        # Risk cooldown durations (minutes)
+        self.risk_cooldown_durations = self.config.get('risk_cooldown_durations', {
+            'captcha': 15,
+            'login_required': 20,
+            'blocked': 30,
+            'rate_limit': 15,
+        })
+
         # Current cycle target task count (randomly determined)
         self._current_cycle_target = random.randint(self.tasks_per_cycle_min, self.tasks_per_cycle_max)
         # Current cooldown period target cycle count (randomly determined)
@@ -93,6 +107,8 @@ class TaobaoAntiBot:
         self.completed_cycles = 0  # Completed cycles count
         self.cooldown_until: Optional[datetime] = None  # Cooldown end time
         self.last_task_time: Optional[datetime] = None  # Last task time
+        self.last_time_cooldown: Optional[datetime] = None  # Last time-based cooldown
+        self.session_start_time: datetime = datetime.now()  # Session start time
 
         if not state_file.exists():
             logger.info(t('log.taobao_state_file_not_exist', path=state_file))
@@ -118,6 +134,10 @@ class TaobaoAntiBot:
             last_task_str = data.get('last_task_time')
             if last_task_str:
                 self.last_task_time = datetime.fromisoformat(last_task_str)
+
+            last_time_cooldown_str = data.get('last_time_cooldown')
+            if last_time_cooldown_str:
+                self.last_time_cooldown = datetime.fromisoformat(last_time_cooldown_str)
 
             # Restore target values
             self._current_cycle_target = data.get('current_cycle_target',
@@ -146,6 +166,7 @@ class TaobaoAntiBot:
                 'completed_cycles': self.completed_cycles,
                 'cooldown_until': self.cooldown_until.isoformat() if self.cooldown_until else None,
                 'last_task_time': self.last_task_time.isoformat() if self.last_task_time else None,
+                'last_time_cooldown': self.last_time_cooldown.isoformat() if self.last_time_cooldown else None,
                 'current_cycle_target': self._current_cycle_target,
                 'current_cooldown_target': self._current_cooldown_target,
                 'updated_at': datetime.now().isoformat()
@@ -238,6 +259,108 @@ class TaobaoAntiBot:
         self._save_state()
         return should_browse, should_cooldown
 
+    def record_task_done(self, success: bool = True) -> Tuple[bool, bool]:
+        """
+        Record task completion (both success and failure count toward cycle).
+
+        Args:
+            success: Whether the task succeeded
+
+        Returns:
+            (should_browse, should_cooldown) tuple
+            - For successful tasks: full cycle logic (browse + cooldown check)
+            - For failed tasks: increment counter + cooldown check only (no browse simulation)
+        """
+        if success:
+            return self.record_task_complete()
+
+        # Failed task: increment counter but skip browse simulation
+        self.tasks_in_cycle += 1
+        self.last_task_time = datetime.now()
+
+        should_cooldown = False
+
+        # Check if current cycle is complete
+        if self.tasks_in_cycle >= self._current_cycle_target:
+            self.completed_cycles += 1
+            self.tasks_in_cycle = 0
+            self._current_cycle_target = random.randint(
+                self.tasks_per_cycle_min, self.tasks_per_cycle_max)
+
+            logger.info(t('log.taobao_cycle_complete', cycle=self.completed_cycles))
+
+            # Check if cooldown needed
+            if self.completed_cycles >= self._current_cooldown_target:
+                should_cooldown = True
+                logger.info(t('log.taobao_need_cooldown', cycles=self.completed_cycles))
+
+        self._save_state()
+        # should_browse=False for failed tasks (browsing in risk state is counterproductive)
+        return False, should_cooldown
+
+    def trigger_risk_cooldown(self, risk_type: str) -> int:
+        """
+        Trigger cooldown due to risk detection.
+
+        Args:
+            risk_type: Risk type ('captcha', 'login_required', 'blocked', 'rate_limit')
+
+        Returns:
+            Cooldown duration in minutes
+        """
+        duration = self.risk_cooldown_durations.get(risk_type, self.cooldown_duration_minutes)
+
+        self.cooldown_until = datetime.now() + timedelta(minutes=duration)
+        self.completed_cycles = 0
+        self.tasks_in_cycle = 0
+        self._current_cooldown_target = random.randint(
+            self.cycles_before_cooldown_min, self.cycles_before_cooldown_max)
+
+        self._save_state()
+        logger.warning(t('log.taobao_enter_cooldown',
+                        reason=f"Risk detected: {risk_type}",
+                        minutes=duration,
+                        until=self.cooldown_until))
+        return duration
+
+    def check_time_based_cooldown(self) -> bool:
+        """
+        Check and trigger time-based cooldown.
+
+        Every `time_cooldown_interval_minutes` (default 30) minutes of continuous running,
+        enter a cooldown period of `time_cooldown_duration_min` to `time_cooldown_duration_max` minutes.
+
+        Returns:
+            True if cooldown was triggered and waited, False otherwise
+        """
+        now = datetime.now()
+
+        # Determine reference time: last time cooldown or session start
+        reference_time = self.last_time_cooldown or self.session_start_time
+
+        elapsed_minutes = (now - reference_time).total_seconds() / 60
+
+        if elapsed_minutes < self.time_cooldown_interval_minutes:
+            return False
+
+        # Trigger time-based cooldown
+        duration = random.randint(self.time_cooldown_duration_min, self.time_cooldown_duration_max)
+        logger.warning("=" * 60)
+        logger.warning(t('log.taobao_enter_cooldown',
+                        reason=f"Time-based cooldown (ran {elapsed_minutes:.0f} min)",
+                        minutes=duration,
+                        until=now + timedelta(minutes=duration)))
+        logger.warning("=" * 60)
+
+        self.last_time_cooldown = now
+        self._save_state()
+
+        # Sleep for cooldown duration
+        time.sleep(duration * 60)
+
+        logger.info(f"Time-based cooldown ended, resuming tasks")
+        return True
+
     def trigger_cooldown(self, reason: str = "cycle_complete"):
         """
         Trigger cooldown period.
@@ -263,6 +386,8 @@ class TaobaoAntiBot:
         self.tasks_in_cycle = 0
         self.completed_cycles = 0
         self.cooldown_until = None
+        self.last_time_cooldown = None
+        self.session_start_time = datetime.now()
         self._current_cycle_target = random.randint(
             self.tasks_per_cycle_min, self.tasks_per_cycle_max)
         self._current_cooldown_target = random.randint(
