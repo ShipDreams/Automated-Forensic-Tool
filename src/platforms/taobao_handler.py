@@ -395,21 +395,12 @@ class TaobaoHandler(BasePlatformHandler):
             logger.info(t('log.waiting_qualification_load'))
             self._sleep(2500, 3500)
 
-            # Detect captcha
+            # Detect captcha - return False immediately, let outer layer handle notification & protection
             root = self.locator.dump_and_parse()
             if root and self.locator.detect_captcha(root):
                 logger.warning(t('log.captcha_detected'))
-
-                # Send desktop notification with sound
-                try:
-                    from core.notifier import notify_captcha
-                    device_id = self.adb.device_id or "unknown"
-                    notify_captcha(device_id=device_id, sound=True)
-                except Exception as e:
-                    logger.warning(t('notify.send_failed', error=str(e)))
-
-                logger.info(t('log.waiting_captcha'))
-                time.sleep(15)
+                logger.warning("Captcha detected during qualification view, aborting to trigger protection")
+                return False
 
             # Stay to record qualification info
             logger.info(t('log.recording_qualification'))

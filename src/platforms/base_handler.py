@@ -288,7 +288,12 @@ class BasePlatformHandler(ABC):
         logger.info(t('log.step_view_qualification'))
         qualification_viewed = self.view_qualification()
         if not qualification_viewed:
-            error = t('log.qualification_view_failed')
+            # Check if failure was caused by captcha/risk control
+            root = self.locator.dump_and_parse()
+            if root and self.locator.detect_captcha(root):
+                error = "RISK_DETECTED: captcha detected during qualification view"
+            else:
+                error = t('log.qualification_view_failed')
             logger.error(error)
             return False, error  # Fail forensic if qualification not viewed
 
