@@ -240,6 +240,9 @@ class TaobaoAntiBot:
         logger.warning(f"[{self.device_id}] Total duration: {total_minutes} min, until {self.cooldown_until.strftime('%H:%M:%S')}")
         logger.warning("=" * 60)
 
+        # Kill Taobao first to clear any risk-flagged state
+        self.adb.force_stop_app(self.TAOBAO_PACKAGE)
+
         # Split total time into 2-4 random segments
         num_segments = random.randint(2, 4)
         segment_ratios = [random.random() for _ in range(num_segments)]
