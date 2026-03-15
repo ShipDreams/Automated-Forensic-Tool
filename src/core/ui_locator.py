@@ -96,12 +96,14 @@ class UILocator:
             adb_controller: ADBController instance
         """
         self.adb = adb_controller
-        self.temp_dir = Path("./temp")
+        # Per-device temp directory to avoid file conflicts in parallel mode
+        safe_id = (adb_controller.device_id or "default").replace(':', '_').replace('/', '_')
+        self.temp_dir = Path(f"./temp/{safe_id}")
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         self.current_xml_path = None
         # Debug: dump file counter
         self.dump_counter = 0
-        self.debug_dir = Path("./temp/debug_dumps")
+        self.debug_dir = Path(f"./temp/{safe_id}/debug_dumps")
         self.debug_dir.mkdir(parents=True, exist_ok=True)
 
     def dump_and_parse(self) -> Optional[ET.Element]:

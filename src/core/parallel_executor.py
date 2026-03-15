@@ -94,8 +94,8 @@ class ParallelExecutor:
         self.max_retries = 3
         self.retry_delay = 60  # seconds
 
-        # Risk-related keywords (these failures should not auto-retry)
-        self._risk_keywords = ['risk_detected', 'captcha', 'login', 'blocked']
+        # Keywords that should not auto-retry (risk-related or environment issues)
+        self._risk_keywords = ['risk_detected', 'captcha', 'login', 'blocked', 'failed to start recording']
 
         # Statistics
         self.stats = {
