@@ -215,6 +215,62 @@ class BasePlatformHandler(ABC):
         root = self.locator.dump_and_parse()
         return self.antibot.is_safe(root)
 
+    def _handle_captcha_if_detected(self) -> bool:
+        """
+        Check for captcha and handle it with human assistance if found.
+
+        Flow:
+        1. Dump UI and check for captcha
+        2. If no captcha → return True (safe to continue)
+        3. If captcha found → notify human via blocking dialog
+        4. Human clicks OK → re-check captcha
+           - No captcha → return True (continue current flow)
+           - Still captcha → trigger protection mode, return False
+        5. Human clicks Cancel / timeout → trigger protection mode, return False
+
+        Returns:
+            True: No captcha or captcha resolved, continue current flow
+            False: Captcha unresolved, task should fail
+        """
+        import time
+
+        root = self.locator.dump_and_parse()
+        if not root or not self.locator.detect_captcha(root):
+            return True  # No captcha, safe to continue
+
+        logger.warning("Captcha detected, notifying human for assistance...")
+        device_id = self.adb.device_id or "unknown"
+
+        # Send blocking notification (waits up to 3 min for human)
+        human_confirmed = False
+        try:
+            from core.notifier import notify_captcha
+            human_confirmed = notify_captcha(device_id=device_id, sound=True)
+        except Exception as e:
+            logger.warning(f"Failed to send captcha notification: {e}")
+
+        if not human_confirmed:
+            # Timeout or cancelled → protection mode
+            logger.warning(f"[{device_id}] No human response, entering protection mode")
+            if self.antibot:
+                self.antibot.enter_protection_mode(reason="captcha_timeout")
+            return False
+
+        # Human confirmed → wait briefly then re-check
+        logger.info(f"[{device_id}] Human confirmed captcha handled, verifying...")
+        time.sleep(3)
+
+        root = self.locator.dump_and_parse()
+        if root and self.locator.detect_captcha(root):
+            # Captcha still present → not actually handled
+            logger.warning(f"[{device_id}] Captcha still present after confirmation, entering protection mode")
+            if self.antibot:
+                self.antibot.enter_protection_mode(reason="captcha_unresolved")
+            return False
+
+        logger.info(f"[{device_id}] Captcha resolved, continuing current flow")
+        return True
+
     # ==================== Template Method ====================
 
     def execute(self, product_url: str, video_play_duration: int = 30) -> tuple:
@@ -257,12 +313,13 @@ class BasePlatformHandler(ABC):
             logger.error(error)
             return False, error
 
-        # Risk check
+        # Risk check (captcha detection with human assistance)
         if not self._check_risk():
-            logger.warning(t('log.risk_detected'))
-            error = "RISK_DETECTED: Platform risk control triggered (captcha/login required)"
-            logger.error(error)
-            return False, error
+            if not self._handle_captcha_if_detected():
+                error = "RISK_DETECTED: Platform risk control triggered (captcha/login required)"
+                logger.error(error)
+                return False, error
+            # Captcha resolved by human, continue flow
 
         # Step 4+5: Video playback (unmute + replay from start)
         # Prefer replay_video_from_start (Taobao), otherwise use old unmute + play
@@ -288,14 +345,16 @@ class BasePlatformHandler(ABC):
         logger.info(t('log.step_view_qualification'))
         qualification_viewed = self.view_qualification()
         if not qualification_viewed:
-            # Check if failure was caused by captcha/risk control
-            root = self.locator.dump_and_parse()
-            if root and self.locator.detect_captcha(root):
-                error = "RISK_DETECTED: captcha detected during qualification view"
-            else:
+            # Check if failure was caused by captcha and try human assistance
+            if self._handle_captcha_if_detected():
+                # Captcha resolved, retry view_qualification
+                logger.info("Captcha resolved, retrying view_qualification...")
+                qualification_viewed = self.view_qualification()
+
+            if not qualification_viewed:
                 error = t('log.qualification_view_failed')
-            logger.error(error)
-            return False, error  # Fail forensic if qualification not viewed
+                logger.error(error)
+                return False, error
 
         logger.info(t('log.platform_forensic_complete', platform=platform_name))
         return True, None

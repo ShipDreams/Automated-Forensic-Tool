@@ -467,59 +467,17 @@ class ParallelExecutor:
             click_screenshot_button()
             time.sleep(5)
 
-            # Platform forensic (with captcha retry support)
+            # Platform forensic (captcha handling is done inside handler)
             if router:
                 try:
                     handler = router.get_handler(task.product_url)
                     handler.set_screenshot_callback(click_screenshot_button)
-
-                    max_captcha_retries = 1  # Allow 1 retry after human captcha handling
-                    for captcha_attempt in range(1 + max_captcha_retries):
-                        success, error = handler.execute(
-                            task.product_url,
-                            task.video_duration or video_duration
-                        )
-
-                        if success:
-                            break  # Task succeeded
-
-                        logger.error(t('log.device_platform_failed', device_id=device_id, error=error))
-
-                        # Check if failure is risk-related
-                        if not (antibot and error):
-                            break  # Non-risk failure, no retry
-
-                        error_lower = str(error).lower()
-                        is_risk = any(k in error_lower for k in ['risk_detected', 'captcha', 'login', 'blocked'])
-
-                        if not is_risk:
-                            break  # Non-risk failure, no retry
-
-                        # Send blocking notification (waits up to 3 min for human)
-                        human_confirmed = False
-                        try:
-                            from core.notifier import notify_captcha
-                            human_confirmed = notify_captcha(device_id=device_id, sound=True)
-                        except Exception as ne:
-                            logger.warning(f"[{device_id}] Failed to send notification: {ne}")
-
-                        if not human_confirmed:
-                            # Timeout or cancelled - enter protection mode, fail task
-                            logger.warning(f"[{device_id}] No human response, entering protection mode")
-                            antibot.enter_protection_mode(reason="captcha_timeout")
-                            break
-
-                        # Human confirmed - retry the task
-                        if captcha_attempt < max_captcha_retries:
-                            logger.info(f"[{device_id}] Human confirmed captcha handled, retrying task...")
-                            time.sleep(3)  # Brief wait for page to stabilize after captcha
-                        else:
-                            # Already used up captcha retry, captcha still present = not actually handled
-                            logger.warning(f"[{device_id}] Captcha still detected after human confirmation, entering protection mode")
-                            antibot.enter_protection_mode(reason="captcha_unresolved")
-                            break
-
+                    success, error = handler.execute(
+                        task.product_url,
+                        task.video_duration or video_duration
+                    )
                     if not success:
+                        logger.error(t('log.device_platform_failed', device_id=device_id, error=error))
                         self._cancel_recording(recorder, recording_started)
                         return False, error
                 except Exception as e:

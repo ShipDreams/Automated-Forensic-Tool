@@ -395,13 +395,6 @@ class TaobaoHandler(BasePlatformHandler):
             logger.info(t('log.waiting_qualification_load'))
             self._sleep(2500, 3500)
 
-            # Detect captcha - return False immediately, let outer layer handle notification & protection
-            root = self.locator.dump_and_parse()
-            if root and self.locator.detect_captcha(root):
-                logger.warning(t('log.captcha_detected'))
-                logger.warning("Captcha detected during qualification view, aborting to trigger protection")
-                return False
-
             # Stay to record qualification info
             logger.info(t('log.recording_qualification'))
             time.sleep(10)
