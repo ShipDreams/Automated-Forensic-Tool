@@ -252,7 +252,7 @@ class BasePlatformHandler(ABC):
         if not human_confirmed:
             # Timeout or cancelled → protection mode
             logger.warning(f"[{device_id}] No human response, entering protection mode")
-            if self.antibot:
+            if self.antibot and hasattr(self.antibot, 'enter_protection_mode'):
                 self.antibot.enter_protection_mode(reason="captcha_timeout")
             return False
 
@@ -264,7 +264,7 @@ class BasePlatformHandler(ABC):
         if root and self.locator.detect_captcha(root):
             # Captcha still present → not actually handled
             logger.warning(f"[{device_id}] Captcha still present after confirmation, entering protection mode")
-            if self.antibot:
+            if self.antibot and hasattr(self.antibot, 'enter_protection_mode'):
                 self.antibot.enter_protection_mode(reason="captcha_unresolved")
             return False
 
@@ -345,16 +345,9 @@ class BasePlatformHandler(ABC):
         logger.info(t('log.step_view_qualification'))
         qualification_viewed = self.view_qualification()
         if not qualification_viewed:
-            # Check if failure was caused by captcha and try human assistance
-            if self._handle_captcha_if_detected():
-                # Captcha resolved, retry view_qualification
-                logger.info("Captcha resolved, retrying view_qualification...")
-                qualification_viewed = self.view_qualification()
-
-            if not qualification_viewed:
-                error = t('log.qualification_view_failed')
-                logger.error(error)
-                return False, error
+            error = t('log.qualification_view_failed')
+            logger.error(error)
+            return False, error
 
         logger.info(t('log.platform_forensic_complete', platform=platform_name))
         return True, None
