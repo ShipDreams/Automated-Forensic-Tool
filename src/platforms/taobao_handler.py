@@ -395,6 +395,10 @@ class TaobaoHandler(BasePlatformHandler):
             logger.info(t('log.waiting_qualification_load'))
             self._sleep(2500, 3500)
 
+            # Detect captcha after qualification page load
+            if not self._handle_captcha_if_detected():
+                return False
+
             # Stay to record qualification info
             logger.info(t('log.recording_qualification'))
             time.sleep(10)
