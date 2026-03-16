@@ -628,8 +628,8 @@
   "log.popup_closed": "关闭弹窗成功",
   "log.state_machine_reset": "状态机已重置",
 
-  "notify.captcha_title": "需要人工辅助",
-  "notify.captcha_message": "设备 {device_id} 遇到验证码，请手动处理",
+  "notify.captcha_title": "需要人工辅助 - {device_id}",
+  "notify.captcha_message": "设备 {device_id} 遇到验证码\n\n请先在手机上滑动验证码，处理完成后点击「确定」继续任务\n点击「取消」或超时将进入保护模式",
   "notify.send_success": "桌面通知已发送",
   "notify.send_failed": "发送通知失败: {error}",
   "notify.sound_play_failed": "播放通知声音失败: {error}",

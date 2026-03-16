@@ -352,7 +352,7 @@ class CrossPlatformNotifier:
             True: User confirmed (captcha handled), can continue
             False: Timeout or failed (no human response), should enter protection mode
         """
-        title = t('notify.captcha_title')
+        title = t('notify.captcha_title', device_id=device_id)
         message = t('notify.captcha_message', device_id=device_id)
         return self.notify(title=title, message=message, sound=sound)
 
