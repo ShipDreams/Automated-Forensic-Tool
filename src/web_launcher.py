@@ -560,6 +560,7 @@ async function startExecution() {
         video_duration: parseInt(document.getElementById('videoDuration').value),
         device_ids: document.getElementById('deviceIds').value.trim(),
         strategy: document.getElementById('strategy').value,
+        lang: currentLang === 'zh' ? 'zh_CN' : 'en_US',
     };
 
     // Show log area
@@ -855,6 +856,11 @@ def _subprocess_worker(params, log_queue):
         video_duration = params.get('video_duration', 30)
         device_ids_str = params.get('device_ids', '')
         strategy = params.get('strategy', 'round_robin')
+        lang = params.get('lang', 'en_US')
+
+        # Set log language to match GUI language
+        from locales import set_language
+        set_language(lang)
 
         # Validate file exists
         if not Path(task_file).exists():
