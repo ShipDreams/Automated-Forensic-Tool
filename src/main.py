@@ -441,7 +441,7 @@ def _load_taobao_antibot_config() -> dict:
     return {}
 
 
-def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 30, enable_antibot: bool = True):
+def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 30, enable_antibot: bool = True, protection_duration: list = None):
     """
     Batch mode: Load tasks from file and execute sequentially.
 
@@ -454,6 +454,7 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
         device_id: Device ID
         video_duration: Video recording duration
         enable_antibot: Whether to enable anti-detection
+        protection_duration: Protection duration range [min, max] in minutes (overrides config)
     """
     if not TaskManager:
         logger.error(t('log.task_manager_unavailable'))
@@ -473,6 +474,10 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
     if enable_antibot and TaobaoAntiBot:
         try:
             taobao_config = _load_taobao_antibot_config()
+            # Apply protection duration override from GUI/CLI
+            if protection_duration:
+                taobao_config['protection_duration_minutes'] = protection_duration
+                logger.info(f"[AntiBot] Protection duration overridden to {protection_duration[0]}-{protection_duration[1]} min")
             taobao_antibot = TaobaoAntiBot(
                 adb_controller=collector.adb,
                 ui_locator=collector.locator,
@@ -602,6 +607,9 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Launch GUI mode
+  python main.py --gui
+
   # Single link forensic
   python main.py "https://item.taobao.com/item.htm?id=xxx"
 
@@ -622,7 +630,7 @@ Examples:
         """
     )
 
-    # Mutual exclusion group: single link mode vs batch mode
+    # Mutual exclusion group: single link mode vs batch mode vs GUI mode
     mode_group = parser.add_mutually_exclusive_group(required=True)
     mode_group.add_argument(
         'product_url',
@@ -633,6 +641,11 @@ Examples:
         '--batch', '-b',
         metavar='FILE',
         help='Batch mode: load tasks from file (supports JSON/CSV/TXT)'
+    )
+    mode_group.add_argument(
+        '--gui',
+        action='store_true',
+        help='Launch GUI mode (pywebview-based visual interface)'
     )
 
     parser.add_argument(
@@ -679,6 +692,12 @@ Examples:
     # Set language if specified
     if args.lang:
         set_language(args.lang)
+
+    # GUI mode
+    if args.gui:
+        from web_launcher import launch_gui
+        launch_gui()
+        sys.exit(0)
 
     # Batch mode
     if args.batch:

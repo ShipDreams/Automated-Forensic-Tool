@@ -55,7 +55,8 @@ class ParallelExecutor:
         device_ids: List[str] = None,
         max_workers: int = None,
         enable_antibot: bool = True,
-        dispatch_strategy: DispatchStrategy = DispatchStrategy.ROUND_ROBIN
+        dispatch_strategy: DispatchStrategy = DispatchStrategy.ROUND_ROBIN,
+        protection_duration: list = None
     ):
         """
         Initialize parallel executor.
@@ -65,10 +66,12 @@ class ParallelExecutor:
             max_workers: Maximum worker threads, defaults to device count
             enable_antibot: Whether to enable anti-detection
             dispatch_strategy: Task dispatch strategy
+            protection_duration: Protection duration range [min, max] in minutes (overrides config)
         """
         self.device_manager = DeviceManager()
         self.dispatcher = TaskDispatcher(strategy=dispatch_strategy)
         self.enable_antibot = enable_antibot
+        self.protection_duration = protection_duration
 
         # Get device list
         if device_ids:
@@ -180,14 +183,19 @@ class ParallelExecutor:
     def _load_antibot_config(self) -> dict:
         """Load anti-detection config"""
         config_path = Path(__file__).parent.parent / 'config' / 'antibot.json'
+        config = {}
         if config_path.exists():
             try:
                 with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                return config.get('taobao', {})
+                    full_config = json.load(f)
+                config = full_config.get('taobao', {})
             except Exception as e:
                 logger.warning(t('log.load_antibot_config_failed', error=e))
-        return {}
+        # Apply protection duration override from GUI/CLI
+        if self.protection_duration:
+            config['protection_duration_minutes'] = self.protection_duration
+            logger.info(f"[AntiBot] Protection duration overridden to {self.protection_duration[0]}-{self.protection_duration[1]} min")
+        return config
 
     def run(
         self,
@@ -706,7 +714,8 @@ def run_parallel_mode(
     device_ids: List[str] = None,
     video_duration: int = 30,
     enable_antibot: bool = True,
-    strategy: str = "round_robin"
+    strategy: str = "round_robin",
+    protection_duration: list = None
 ) -> bool:
     """
     Run parallel mode.
@@ -717,6 +726,7 @@ def run_parallel_mode(
         video_duration: Video recording duration
         enable_antibot: Whether to enable anti-detection
         strategy: Dispatch strategy
+        protection_duration: Protection duration range [min, max] in minutes (overrides config)
 
     Returns:
         Whether successful
@@ -734,7 +744,8 @@ def run_parallel_mode(
         executor = ParallelExecutor(
             device_ids=device_ids,
             enable_antibot=enable_antibot,
-            dispatch_strategy=dispatch_strategy
+            dispatch_strategy=dispatch_strategy,
+            protection_duration=protection_duration
         )
 
         # Load tasks

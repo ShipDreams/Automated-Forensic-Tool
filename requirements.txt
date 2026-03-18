@@ -3,6 +3,9 @@
 # Desktop notification (cross-platform)
 plyer>=2.1.0
 
+# GUI launcher (pywebview)
+pywebview>=4.0
+
 # Python 版本要求
 # python >= 3.8
 
