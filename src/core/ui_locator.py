@@ -1379,6 +1379,29 @@ class UILocator:
         logger.warning(t('log.start_record_button_not_found'))
         return None
 
+    def find_shishibao_microphone_checkbox(self, root: ET.Element) -> Optional[UIElement]:
+        """
+        Find Shishibao microphone checkbox.
+
+        Args:
+            root: UI root node
+
+        Returns:
+            Found checkbox element or None
+        """
+        # Strategy 1: Find by resource-id
+        target_id = "com.a1010bao.web.rdbao:id/voice_btn"
+        element = self.find_element_by_id(root, target_id)
+        if element:
+            return element
+
+        # Strategy 2: Find CheckBox near "麦克风" text
+        for node in root.iter():
+            if node.attrib.get('class', '') == 'android.widget.CheckBox' and node.attrib.get('checkable', '') == 'true':
+                return UIElement(node)
+
+        return None
+
     def find_shishibao_stop_record_button(self, root: ET.Element) -> Optional[UIElement]:
         """
         Find Shishibao "Stop Recording" button.

@@ -107,10 +107,24 @@ class ScreenRecorder:
                     logger.error(t('log.click_start_now_failed'))
                     return False
 
-                # Step 4: Click "Start Recording"
-                logger.info(t('log.step_4_click_start_record'))
+                # Step 3.5: Uncheck microphone if checked
+                logger.info("检查麦克风勾选状态...")
                 time.sleep(2)  # Wait for page response
                 root = self.locator.dump_and_parse()
+                if root:
+                    mic_checkbox = self.locator.find_shishibao_microphone_checkbox(root)
+                    if mic_checkbox and mic_checkbox.node.attrib.get('checked', 'false') == 'true':
+                        logger.info("麦克风已勾选，正在取消...")
+                        self.locator.click_element(mic_checkbox)
+                        time.sleep(1)
+                        # Re-dump after clicking
+                        root = self.locator.dump_and_parse()
+
+                # Step 4: Click "Start Recording"
+                logger.info(t('log.step_4_click_start_record'))
+                if not root:
+                    time.sleep(2)
+                    root = self.locator.dump_and_parse()
                 if not root:
                     logger.error(t('log.cannot_get_shishibao_ui'))
                     return False
