@@ -76,6 +76,9 @@ class Task:
     result: Optional[TaskResult] = None
     error_history: List[str] = field(default_factory=list)
 
+    # Evidence name (appended to default timestamp filename when saving recording)
+    evidence_name: str = ""
+
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 

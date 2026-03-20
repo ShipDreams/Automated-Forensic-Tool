@@ -389,6 +389,7 @@ class ParallelExecutor:
                 time.sleep(delay_between_tasks)
 
         # Cleanup
+        context.adb.restore_original_ime()
         self.device_manager.mark_device_available(device_id, success=(failed == 0))
         logger.info(t('log.worker_thread_ended', device_id=device_id, completed=completed, failed=failed))
 
@@ -458,6 +459,9 @@ class ParallelExecutor:
 
             adb.wake_screen()
 
+            # Setup ADBKeyboard for Unicode text input
+            adb.setup_adb_keyboard()
+
             # Start recording
             adb.enable_visual_feedback()
             time.sleep(1)
@@ -494,7 +498,7 @@ class ParallelExecutor:
                     return False, str(e)
 
             # Stop recording
-            if not recorder.stop_recording():
+            if not recorder.stop_recording(evidence_name=task.evidence_name):
                 logger.error(t('log.device_stop_recording_failed', device_id=device_id))
                 return False, "Failed to stop recording"
 

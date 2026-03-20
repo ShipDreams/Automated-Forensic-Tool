@@ -116,6 +116,7 @@ class TaskLoader:
                         'product_url': url.strip(),
                         'platform': row.get('platform', ''),
                         'video_duration': int(row.get('video_duration', 30)),
+                        'evidence_name': row.get('evidence_name', '').strip(),
                     }
 
                     # Handle priority

@@ -152,19 +152,21 @@ class ScreenRecorder:
             logger.error(t('log.start_shishibao_recording_failed', error=e), exc_info=True)
             return False
 
-    def stop_recording(self, wait_time: int = 3, max_retries: int = 3) -> bool:
+    def stop_recording(self, wait_time: int = 3, max_retries: int = 3, evidence_name: str = "") -> bool:
         """
         Stop recording and save via "Shishibao" App.
 
         Flow:
         1. Open "Shishibao" App
         2. Click "Stop Recording" (with retry)
-        3. Click "Save"
-        4. Wait for save to complete
+        3. If evidence_name provided, find the filename input field and append evidence_name
+        4. Click "Save"
+        5. Wait for save to complete
 
         Args:
             wait_time: Wait time after save (seconds)
             max_retries: Maximum retry attempts for finding button
+            evidence_name: Evidence name to append to default filename (e.g. "xxx店_淘宝")
 
         Returns:
             Whether stop and save was successful
@@ -234,7 +236,38 @@ class ScreenRecorder:
                 logger.error(t('log.click_stop_record_failed'))
                 return False
 
-            # Step 3: Click "Save"
+            # Step 3: Input evidence name into filename field (if provided)
+            if evidence_name:
+                logger.info(f"准备在文件名输入框追加证据名称: {evidence_name}")
+                time.sleep(2)  # Wait for save page to load
+                root = self.locator.dump_and_parse()
+                if root:
+                    # Find filename input by exact resource-id
+                    filename_input = self.locator.find_element_by_id(
+                        root, "com.a1010bao.web.rdbao:id/tv_modify_name"
+                    )
+                    if filename_input:
+                        bounds = filename_input.get_bounds()
+                        if bounds:
+                            x1, y1, x2, y2 = bounds
+                            # Click the right edge of the input field to position cursor at end of timestamp
+                            right_x = x2 - 10
+                            center_y = (y1 + y2) // 2
+                            logger.info(f"点击文件名输入框右侧 ({right_x}, {center_y})")
+                            self.adb.tap(right_x, center_y)
+                            time.sleep(1)
+                            # Input evidence name (appended after default timestamp)
+                            logger.info(f"输入证据名称: {evidence_name}")
+                            self.adb.input_text(evidence_name)
+                            time.sleep(1)
+                        else:
+                            logger.warning("无法获取文件名输入框坐标")
+                    else:
+                        logger.warning("未找到文件名输入框 (tv_modify_name)")
+                else:
+                    logger.warning("无法获取保存页面UI，跳过证据名称输入")
+
+            # Step 4: Click "Save"
             logger.info(t('log.step_3_click_save'))
             time.sleep(2)  # Wait for response
             root = self.locator.dump_and_parse()
@@ -251,7 +284,7 @@ class ScreenRecorder:
                 logger.error(t('log.click_save_failed'))
                 return False
 
-            # Step 4: Wait for save to complete
+            # Step 5: Wait for save to complete
             logger.info(t('log.step_4_wait_save', wait_time=wait_time))
             time.sleep(wait_time)
 

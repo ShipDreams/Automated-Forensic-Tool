@@ -149,6 +149,10 @@ class EvidenceCollector:
         self.adb.wake_screen()
         logger.info(t('log.screen_awakened'))
 
+        # Setup ADBKeyboard for Unicode text input (Chinese evidence names, etc.)
+        if not self.adb.setup_adb_keyboard():
+            logger.warning("ADBKeyboard setup failed, falling back to legacy input method")
+
         # Check cooldown status
         if self.antibot and not self.antibot.can_proceed():
             status = self.antibot.get_cooldown_status()
@@ -207,13 +211,13 @@ class EvidenceCollector:
             logger.error(t('log.show_beijing_time_failed', error=e))
             return False
 
-    def stage_9_export_evidence(self) -> bool:
+    def stage_9_export_evidence(self, evidence_name: str = "") -> bool:
         """Stage 9: Stop Shishibao recording and save"""
         logger.info("=" * 60)
         logger.info(t('log.stage_export_evidence'))
         logger.info("=" * 60)
 
-        if not self.recorder.stop_recording():
+        if not self.recorder.stop_recording(evidence_name=evidence_name):
             logger.error(t('log.stop_recording_failed'))
             return False
 
@@ -231,7 +235,8 @@ class EvidenceCollector:
     def run_full_process(
         self,
         product_url: str,
-        video_play_duration: int = 30
+        video_play_duration: int = 30,
+        evidence_name: str = ""
     ) -> tuple:
         """
         Execute full forensic process.
@@ -239,6 +244,7 @@ class EvidenceCollector:
         Args:
             product_url: Product link (supports Taobao/Tmall/JD/Douyin etc.)
             video_play_duration: Video recording duration (seconds)
+            evidence_name: Evidence name to append to filename (e.g. "xxx店_淘宝")
 
         Returns:
             (success: bool, error: str or None) - Whether successful, error reason on failure
@@ -310,7 +316,7 @@ class EvidenceCollector:
                     return False, legacy_error
 
             # Stage 9: Stop and export (save on success)
-            if not self.stage_9_export_evidence():
+            if not self.stage_9_export_evidence(evidence_name=evidence_name):
                 error = t('log.export_evidence_failed')
                 logger.error(error)
                 return False, error
@@ -525,7 +531,8 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
 
         success, error = collector.run_full_process(
             product_url=task.product_url,
-            video_play_duration=task.video_duration or video_duration
+            video_play_duration=task.video_duration or video_duration,
+            evidence_name=task.evidence_name
         )
 
         # Record task completion and handle protection mode
@@ -596,6 +603,9 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
     if taobao_antibot:
         logger.info(t('log.all_tasks_complete_closing'))
         taobao_antibot.close_taobao()
+
+    # Restore original input method
+    collector.adb.restore_original_ime()
 
     return task_manager.stats.get('failed', 0) == 0
 
@@ -738,6 +748,9 @@ Examples:
         product_url=args.product_url,
         video_play_duration=args.play_duration
     )
+
+    # Restore original input method
+    collector.adb.restore_original_ime()
 
     if not success and error:
         logger.error(f"Forensic failed: {error}")

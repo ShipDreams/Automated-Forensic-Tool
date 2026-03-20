@@ -28,6 +28,9 @@ class ADBController:
         self.device_id = device_id
         if not self.device_id:
             self.device_id = self._auto_detect_device()
+        # Original IME saved before switching to ADBKeyboard
+        self._original_ime: Optional[str] = None
+        self._adb_keyboard_active: bool = False
 
     def _auto_detect_device(self) -> Optional[str]:
         """Auto-detect connected device"""
@@ -339,7 +342,9 @@ class ADBController:
 
     def input_text(self, text: str) -> bool:
         """
-        Input text (enhanced version, supports URLs and special characters).
+        Input text via ADBKeyboard broadcast (supports Unicode/Chinese/special chars).
+
+        Falls back to legacy 'adb shell input text' if ADBKeyboard is not active.
 
         Args:
             text: Text to input
@@ -350,23 +355,21 @@ class ADBController:
         try:
             logger.info(t('log.input_text', text=text))
 
-            # For URLs or text with special characters, use safer input method
-            # Escape special characters: space -> %s, & -> \&, others keep as-is
-            escaped_text = text.replace(" ", "%s")
-
-            # For common special characters in URLs, wrap with quotes
-            # to avoid shell interpretation issues
-            special_chars = ['&', '?', '=', '/', ':', '.', '-', '_']
-            has_special = any(char in text for char in special_chars)
-
-            if has_special:
-                # Use input text command directly, ADB handles escaping
-                result = self._run_adb_command(["shell", "input", "text", escaped_text])
+            if self._adb_keyboard_active:
+                # Use ADBKeyboard broadcast - supports all Unicode characters
+                result = self._run_adb_command([
+                    "shell", "am", "broadcast",
+                    "-a", "ADB_INPUT_TEXT",
+                    "--es", "msg", text
+                ])
+                time.sleep(0.5)
+                return result.returncode == 0
             else:
+                # Fallback: legacy adb input text (ASCII only)
+                escaped_text = text.replace(" ", "%s")
                 result = self._run_adb_command(["shell", "input", "text", escaped_text])
-
-            time.sleep(0.5)
-            return result.returncode == 0
+                time.sleep(0.5)
+                return result.returncode == 0
         except Exception as e:
             logger.error(t('log.input_text_failed', error=e))
             return False
@@ -795,6 +798,83 @@ class ADBController:
         except Exception as e:
             logger.error(t('log.get_overlay_button_failed', error=e))
             return None
+
+    # ==================== ADBKeyboard IME ====================
+
+    def setup_adb_keyboard(self) -> bool:
+        """
+        Install and enable ADBKeyboard for Unicode text input.
+
+        Automatically installs APK if not present, saves original IME,
+        and switches to ADBKeyboard.
+
+        Returns:
+            Whether setup was successful
+        """
+        if self._adb_keyboard_active:
+            logger.info("ADBKeyboard already active, skipping setup")
+            return True
+
+        try:
+            adb_ime = "com.android.adbkeyboard/.AdbIME"
+
+            # Check if ADBKeyboard is already installed
+            result = self._run_adb_command(["shell", "ime", "list", "-s"])
+            installed = adb_ime.split('/')[0] in result.stdout
+
+            if not installed:
+                # Find APK path
+                from pathlib import Path
+                apk_path = Path(__file__).parent.parent.parent / 'tools' / 'ADBKeyboard.apk'
+                if not apk_path.exists():
+                    logger.error(f"ADBKeyboard.apk not found at {apk_path}")
+                    return False
+
+                logger.info("Installing ADBKeyboard...")
+                install_result = self._run_adb_command(["install", str(apk_path)])
+                if install_result.returncode != 0:
+                    logger.error(f"ADBKeyboard install failed: {install_result.stderr}")
+                    return False
+                logger.info("ADBKeyboard installed successfully")
+
+            # Save original IME
+            result = self._run_adb_command(["shell", "settings", "get", "secure", "default_input_method"])
+            original = result.stdout.strip()
+            if original and adb_ime not in original:
+                self._original_ime = original
+                logger.info(f"Saved original IME: {self._original_ime}")
+
+            # Enable and set ADBKeyboard
+            self._run_adb_command(["shell", "ime", "enable", adb_ime])
+            self._run_adb_command(["shell", "ime", "set", adb_ime])
+            self._adb_keyboard_active = True
+            logger.info("ADBKeyboard enabled and set as current IME")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to setup ADBKeyboard: {e}")
+            return False
+
+    def restore_original_ime(self) -> bool:
+        """
+        Restore the original input method.
+
+        Returns:
+            Whether restore was successful
+        """
+        if not self._original_ime:
+            logger.info("No original IME saved, skipping restore")
+            return True
+
+        try:
+            logger.info(f"Restoring original IME: {self._original_ime}")
+            self._run_adb_command(["shell", "ime", "set", self._original_ime])
+            self._adb_keyboard_active = False
+            logger.info("Original IME restored")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to restore IME: {e}")
+            return False
 
     def _run_adb_command(self, args: List[str]) -> subprocess.CompletedProcess:
         """Execute ADB command"""
