@@ -730,6 +730,7 @@ def run_grouped_batch_mode(task_file: str = None, device_id: str = None,
         favorites=favorites,
         handler=handler,
         db_loader=db_loader,
+        group_size=group_size,
     )
 
     # Execute all groups
@@ -753,7 +754,7 @@ def run_grouped_batch_mode(task_file: str = None, device_id: str = None,
     fail_count = sum(1 for r in results if not r.success)
     logger.info("=" * 60)
     logger.info(f"Grouped batch complete: {success_count} success, {fail_count} failed "
-                f"out of {len(groups)} groups")
+                f"across {len(results)} executed groups (planned chunks: {len(groups)})")
     logger.info("=" * 60)
 
     return fail_count == 0

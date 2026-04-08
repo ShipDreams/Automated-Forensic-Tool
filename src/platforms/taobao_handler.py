@@ -212,56 +212,46 @@ class TaobaoHandler(BasePlatformHandler):
 
     def replay_video_from_start(self) -> bool:
         """
-        Replay video from start.
+        Prepare product video for recording.
 
-        Since unmute now uses fast image recognition (~0.5s), the video
-        hasn't advanced far. We unmute first, then optionally drag progress
-        bar only as fallback if needed.
+        Current Taobao phase-2 flow only needs to ensure audio is enabled.
+        Do not click play or drag the progress bar; after unmuting, the caller
+        immediately enters the configured recording wait duration.
         """
         logger.info("=" * 60)
         logger.info(t('log.replay_video_from_start'))
         logger.info("=" * 60)
 
-        # Check if video is paused (play button iv_play_btn visible means paused)
-        root = self.locator.dump_and_parse()
-        if root:
-            play_btn = self.locator.find_element_by_id(root, "com.taobao.taobao:id/iv_play_btn")
-            if play_btn:
-                logger.info(t('log.video_paused_clicking_play'))
-                self.locator.click_element(play_btn, apply_offset=False)
-                self._sleep(1500, 2500)
-
-        # Unmute audio (image recognition first, fast enough that video barely advanced)
-        self.unmute_video(max_attempts=2)
-
-        # Drag progress bar to start as optional step
-        logger.info(t('log.dragging_progress_bar'))
-        success = self.locator.drag_video_progress_to_start(max_attempts=1)
-
+        success = self.unmute_video(max_attempts=3, image_only=True)
         if success:
             logger.info(t('log.video_replay_started'))
         else:
-            logger.warning(t('log.progress_bar_drag_failed'))
+            logger.warning(t('log.unmute_failed_continue'))
 
-        return True  # Continue flow even if drag failed
+        return True
 
-    def unmute_video(self, max_attempts: int = 2) -> bool:
-        """Unmute video audio. Tries image recognition first (fast), then XML dump fallback."""
+    def unmute_video(self, max_attempts: int = 3, image_only: bool = True) -> bool:
+        """Unmute video audio. Prefer direct image recognition when templates exist."""
         logger.info("=" * 60)
         logger.info(t('log.unmute_video'))
         logger.info("=" * 60)
 
-        # Try image recognition first (fast, ~0.5s vs XML dump ~3-5s)
         img_locator = self.locator._get_image_locator()
         if img_locator and img_locator.template_exists("mute_btn"):
             logger.info("Trying image recognition for mute button...")
-            if img_locator.find_and_click("mute_btn", threshold=0.75, max_attempts=2):
+            if img_locator.find_and_click("mute_btn", threshold=0.70, max_attempts=max_attempts):
                 logger.info(t('log.video_unmuted'))
                 self._sleep(1000, 1500)
                 return True
+            if image_only:
+                logger.warning("Image recognition did not find mute button, skipping XML fallback")
+                return False
             logger.info("Image recognition failed, falling back to XML dump...")
+        elif image_only:
+            logger.warning("Mute button template not available, skipping XML fallback")
+            return False
 
-        # Fallback: XML dump approach
+        # Fallback: XML dump approach (only when explicitly allowed)
         for attempt in range(1, max_attempts + 1):
             logger.info(t('log.finding_volume_button', attempt=attempt, max=max_attempts))
 
@@ -294,6 +284,15 @@ class TaobaoHandler(BasePlatformHandler):
         """View shop info (click shop button to enter shop page)."""
         logger.info(t('log.clicking_shop_button'))
 
+        img_locator = self.locator._get_image_locator()
+        if img_locator and img_locator.template_exists("shop_btn"):
+            logger.info("Trying image recognition for shop button...")
+            if img_locator.find_and_click("shop_btn", threshold=0.75):
+                logger.info("Shop button clicked via image recognition")
+                self._sleep_after_click()
+                self._sleep(2500, 3500)
+                return self._navigate_to_shop_home(root=None)
+
         root = self.locator.dump_and_parse()
         if not root:
             logger.error(t('log.cannot_get_ui_hierarchy'))
@@ -301,15 +300,6 @@ class TaobaoHandler(BasePlatformHandler):
 
         shop_btn = self.locator.find_shop_button(root)
         if not shop_btn:
-            # Image fallback for shop button
-            img_locator = self.locator._get_image_locator()
-            if img_locator and img_locator.template_exists("shop_btn"):
-                logger.info("Trying image recognition for shop button...")
-                if img_locator.find_and_click("shop_btn", threshold=0.75):
-                    logger.info("Shop button clicked via image recognition")
-                    self._sleep_after_click()
-                    self._sleep(2500, 3500)
-                    return self._navigate_to_shop_home(root=None)
             logger.error(t('log.shop_button_not_found'))
             return False
 

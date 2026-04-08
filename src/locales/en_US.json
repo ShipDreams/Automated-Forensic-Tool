@@ -518,7 +518,7 @@
   "log.play_video_fallback": "Playing product video (fallback method)",
   "log.video_triggered": "Video playback triggered",
   "log.video_trigger_failed": "Failed to auto-trigger video playback (product may not have video or already playing)",
-  "log.replay_video_from_start": "Replay video from start (unmute + drag progress bar)",
+  "log.replay_video_from_start": "Only unmute product video after opening the detail page",
   "log.video_paused_clicking_play": "Detected video is paused, clicking play button to resume...",
   "log.dragging_progress_bar": "Dragging video progress bar to start position...",
   "log.video_replay_started": "Video replay from start",

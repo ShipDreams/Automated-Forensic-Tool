@@ -32,6 +32,7 @@ class TaobaoFavorites:
         self.locator = ui_locator
         self.antibot = antibot
         self._img_locator = None
+        self._favorite_scroll_index = 0
 
     def _get_image_locator(self):
         """Get image locator instance."""
@@ -39,11 +40,70 @@ class TaobaoFavorites:
             self._img_locator = self.locator._get_image_locator()
         return self._img_locator
 
+    def _click_by_template_first(self, template_name: str, threshold: float = 0.7,
+                                 max_attempts: int = 3) -> bool:
+        """
+        Click by OpenCV template first.
+
+        When a template exists, do not dump XML before trying image matching.
+        """
+        img = self._get_image_locator()
+        if not img or not img.template_exists(template_name):
+            return False
+        return img.find_and_click(template_name, threshold=threshold, max_attempts=max_attempts)
+
     def _sleep(self, min_ms: int = 800, max_ms: int = 1500):
         """Human-like random delay."""
         import random
         delay = random.uniform(min_ms / 1000, max_ms / 1000)
         time.sleep(delay)
+
+    def _reset_list_navigation_state(self):
+        """Reset favorites list cursor."""
+        self._favorite_scroll_index = 0
+
+    def _is_on_favorites_page(self) -> bool:
+        """Fast check for the favorites list page without dumping XML."""
+        img = self._get_image_locator()
+        if img and img.find_template("manage_btn", threshold=0.6):
+            return True
+        return False
+
+    def _get_primary_item_tap_point(self, width: int, height: int) -> tuple:
+        """
+        Return the fixed tap point for the first fully visible favorite item.
+
+        The list layout is more stable than the nth-row y-coordinate. We scroll the
+        next target item into this slot, then always tap the same position.
+        """
+        tap_x = int(width * 0.28)
+        tap_y = int(height * 0.24)
+        return tap_x, tap_y
+
+    def _scroll_to_next_visible_item(self, width: int, height: int, fine_tune: bool = False) -> bool:
+        """
+        Scroll the favorites list so the next item moves into the primary tap slot.
+
+        `fine_tune=True` uses a shorter swipe to correct slight row misalignment
+        without skipping an item.
+        """
+        start_x = int(width * 0.30)
+        if fine_tune:
+            start_y = int(height * 0.36)
+            end_y = int(height * 0.24)
+            duration_ms = 230
+        else:
+            start_y = int(height * 0.42)
+            end_y = int(height * 0.20)
+            duration_ms = 340
+
+        logger.info(f"Scrolling favorites list (fine_tune={fine_tune})")
+        if not self.adb.swipe(start_x, start_y, start_x, end_y, duration_ms=duration_ms):
+            logger.warning("Favorites list swipe failed")
+            return False
+
+        self._sleep(1000, 1600)
+        return True
 
     def navigate_to_favorites(self) -> bool:
         """
@@ -57,45 +117,38 @@ class TaobaoFavorites:
             Whether navigation was successful
         """
         logger.info("Navigating to favorites page...")
+        self._reset_list_navigation_state()
 
         # Step 1: Click "我的淘宝" tab
-        root = self.locator.dump_and_parse()
-        if not root:
-            logger.error("Cannot get UI hierarchy")
-            return False
+        if not self._click_by_template_first("my_taobao_tab", threshold=0.7):
+            root = self.locator.dump_and_parse()
+            if not root:
+                logger.error("Cannot get UI hierarchy")
+                return False
 
-        my_taobao_tab = self.locator.find_my_taobao_tab(root)
-        if my_taobao_tab:
+            my_taobao_tab = self.locator.find_my_taobao_tab(root)
+            if not my_taobao_tab:
+                logger.error("'我的淘宝' tab not found")
+                return False
             if not self.locator.click_element(my_taobao_tab):
                 logger.error("Failed to click '我的淘宝' tab")
-                return False
-        else:
-            # Image fallback
-            img = self._get_image_locator()
-            if not img or not img.find_and_click("my_taobao_tab", threshold=0.7):
-                logger.error("'我的淘宝' tab not found")
                 return False
 
         self._sleep(2000, 3000)
 
         # Step 2: Click "收藏" entry
-        root = self.locator.dump_and_parse()
-
-        # Try XML first
-        if root:
-            fav_entry = self.locator.find_favorites_entry(root)
-            if fav_entry:
-                if self.locator.click_element(fav_entry):
-                    logger.info("Clicked favorites entry via XML")
-                    self._sleep(2000, 3000)
-                    return True
-
-        # Image fallback
-        img = self._get_image_locator()
-        if img and img.find_and_click("favorites_entry", threshold=0.75):
+        if self._click_by_template_first("favorites_entry", threshold=0.75):
             logger.info("Clicked favorites entry via image recognition")
             self._sleep(2000, 3000)
             return True
+
+        root = self.locator.dump_and_parse()
+        if root:
+            fav_entry = self.locator.find_favorites_entry(root)
+            if fav_entry and self.locator.click_element(fav_entry):
+                logger.info("Clicked favorites entry via XML")
+                self._sleep(2000, 3000)
+                return True
 
         logger.error("Failed to find favorites entry")
         return False
@@ -191,22 +244,18 @@ class TaobaoFavorites:
         """
         logger.info("Adding product to favorites...")
 
-        # Try XML first
-        root = self.locator.dump_and_parse()
-        if root:
-            fav_btn = self.locator.find_favorite_button(root)
-            if fav_btn:
-                if self.locator.click_element(fav_btn):
-                    logger.info("Product added to favorites via XML")
-                    self._sleep(1000, 1500)
-                    return True
-
-        # Image fallback
-        img = self._get_image_locator()
-        if img and img.find_and_click("favorite_btn", threshold=0.7):
+        if self._click_by_template_first("favorite_btn", threshold=0.7):
             logger.info("Product added to favorites via image recognition")
             self._sleep(1000, 1500)
             return True
+
+        root = self.locator.dump_and_parse()
+        if root:
+            fav_btn = self.locator.find_favorite_button(root)
+            if fav_btn and self.locator.click_element(fav_btn):
+                logger.info("Product added to favorites via XML")
+                self._sleep(1000, 1500)
+                return True
 
         logger.warning("Failed to find favorite button")
         return False
@@ -215,11 +264,9 @@ class TaobaoFavorites:
         """
         Click the nth item in favorites list.
 
-        WebView page, XML dump useless. Use screen-ratio-based coordinate clicking.
-        Ratios derived from actual favorites screenshot (1080x2400):
-          - List starts at ~10.4% of screen height (below title+tabs+filters)
-          - Each item height is ~11.3% of screen height
-          - First item center at ~17.5% height
+        WebView page, XML dump is unreliable. Instead of tapping the nth y-position,
+        keep scrolling the next item into one stable "first visible item" slot and
+        tap that fixed point every time.
 
         Args:
             index: 0-based index of the item to click
@@ -235,29 +282,35 @@ class TaobaoFavorites:
             return False
 
         width, height = screen_size
+        if index < 0:
+            logger.error("Favorite item index must be >= 0")
+            return False
 
-        # Ratio-based positioning (works across different resolutions)
-        first_item_center_ratio = 0.24    # First item center at 24% of screen height
-        item_height_ratio = 0.113          # Each item is 11.3% of screen height
-        tap_x_ratio = 0.25                 # Click on product image area (left quarter)
+        if index < self._favorite_scroll_index:
+            logger.warning("Favorite list index moved backwards, resetting cursor")
+            self._favorite_scroll_index = 0
 
-        tap_y = int(height * (first_item_center_ratio + item_height_ratio * index))
-        tap_x = int(width * tap_x_ratio)
+        while self._favorite_scroll_index < index:
+            if not self._scroll_to_next_visible_item(width, height):
+                return False
+            self._favorite_scroll_index += 1
 
-        # If item would be off-screen, scroll first
-        if tap_y > height - int(height * 0.1):
-            logger.info(f"Item {index} may be off-screen (tap_y={tap_y}), scrolling down...")
-            self.adb.swipe(width // 2, int(height * 0.75), width // 2, int(height * 0.25), duration_ms=500)
-            self._sleep(1000, 1500)
-            # After scrolling, click the first visible item position
-            tap_y = int(height * first_item_center_ratio)
+        tap_x, tap_y = self._get_primary_item_tap_point(width, height)
 
-        logger.info(f"Tapping favorite item {index} at ({tap_x}, {tap_y})")
-        if self.adb.tap(tap_x, tap_y):
-            self._sleep(2500, 3500)  # Wait for product page to load
-            return True
+        for attempt in range(1, 4):
+            logger.info(f"Tapping favorite item {index} at ({tap_x}, {tap_y}), attempt={attempt}")
+            if not self.adb.tap(tap_x, tap_y):
+                logger.warning("Tap failed, retrying...")
+                continue
 
-        logger.error("Tap failed")
+            self._sleep(2500, 3500)
+            if not self._is_on_favorites_page():
+                return True
+
+            logger.warning("Still on favorites page after tap, adjusting list position...")
+            self._scroll_to_next_visible_item(width, height, fine_tune=True)
+
+        logger.error("Failed to open favorite item after retries")
         return False
 
     def go_back_to_favorites_list(self) -> bool:

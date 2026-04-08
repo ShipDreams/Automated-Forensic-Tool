@@ -518,7 +518,7 @@
   "log.play_video_fallback": "播放商品视频（备用方法）",
   "log.video_triggered": "✓ 视频播放已触发",
   "log.video_trigger_failed": "⚠ 未能自动触发视频播放（可能商品无视频或已自动播放）",
-  "log.replay_video_from_start": "视频从头播放（打开音量 + 拖动进度条）",
+  "log.replay_video_from_start": "进入商品详情后仅尝试打开视频声音",
   "log.video_paused_clicking_play": "检测到视频处于暂停状态，点击播放按钮恢复播放...",
   "log.dragging_progress_bar": "拖动视频进度条到开始位置...",
   "log.video_replay_started": "✓ 视频已从头开始播放",

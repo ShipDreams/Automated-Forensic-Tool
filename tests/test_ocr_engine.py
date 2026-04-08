@@ -49,6 +49,22 @@ class TestOCREngine(unittest.TestCase):
             result = engine.extract_company_name("dummy.png")
         self.assertEqual(result, "杭州未来品牌管理有限公司")
 
+    def test_extract_individual_business_name_from_unlabeled_line(self):
+        engine = OCREngine()
+        with patch.object(engine, 'recognize_text', return_value=[
+            {"text": "济南高新区星灵百货店（个体工商户）", "confidence": 0.99, "box": []}
+        ]):
+            result = engine.extract_company_name("dummy.png")
+        self.assertEqual(result, "济南高新区星灵百货店")
+
+    def test_extract_individual_business_name_from_labeled_line(self):
+        engine = OCREngine()
+        with patch.object(engine, 'recognize_text', return_value=[
+            {"text": "名称：济南高新区星灵百货店（个体工商户）", "confidence": 0.99, "box": []}
+        ]):
+            result = engine.extract_company_name("dummy.png")
+        self.assertEqual(result, "济南高新区星灵百货店")
+
     def test_extract_company_name_prefers_neighbor_after_label(self):
         engine = OCREngine()
         with patch.object(engine, 'recognize_text', return_value=[
@@ -74,6 +90,15 @@ class TestOCREngine(unittest.TestCase):
         with patch.object(engine, 'recognize_text', return_value=[
             {"text": "公司类型有限责任公司", "confidence": 0.99, "box": []},
             {"text": "法定代表人甘恩凤", "confidence": 0.99, "box": []},
+        ]):
+            result = engine.extract_company_name("dummy.png")
+        self.assertIsNone(result)
+
+    def test_extract_company_name_rejects_generic_shop_text_false_positive(self):
+        engine = OCREngine()
+        with patch.object(engine, 'recognize_text', return_value=[
+            {"text": "网店经营者营业执照信息", "confidence": 0.99, "box": []},
+            {"text": "根据相关法律法规要求，网店经营相关资质信息公示如下：", "confidence": 0.99, "box": []},
         ]):
             result = engine.extract_company_name("dummy.png")
         self.assertIsNone(result)

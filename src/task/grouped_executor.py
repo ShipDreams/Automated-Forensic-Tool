@@ -8,6 +8,7 @@ Orchestrates the two-phase forensic flow for each evidence group:
 
 import time
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
 
@@ -38,7 +39,7 @@ class GroupedExecutor:
       Phase 2: Record evidence from favorites list (with Shishibao recording)
     """
 
-    def __init__(self, collector, favorites, handler, db_loader=None):
+    def __init__(self, collector, favorites, handler, db_loader=None, group_size: int = 3):
         """
         Args:
             collector: EvidenceCollector instance (for recording start/stop)
@@ -50,6 +51,7 @@ class GroupedExecutor:
         self.favorites = favorites
         self.handler = handler
         self.db_loader = db_loader
+        self.group_size = max(1, group_size)
 
     def execute_all_groups(self, groups: List[EvidenceGroup],
                            video_duration: int = 30,
@@ -66,49 +68,73 @@ class GroupedExecutor:
             List of GroupResult objects
         """
         results = []
-        total = len(groups)
+        planned_total = len(groups)
+        shop_task_queues = self._build_shop_task_queues(groups)
+        executed_count = 0
 
-        for idx, group in enumerate(groups):
-            logger.info("=" * 70)
-            logger.info(f"Processing evidence group {idx + 1}/{total}: "
-                        f"{group.evidence_name} ({len(group.tasks)} tasks)")
-            logger.info("=" * 70)
+        for shop_name, pending_tasks in shop_task_queues.items():
+            group_index = 1
 
-            # Check antibot cooldown between groups
-            if taobao_antibot and idx > 0:
-                if hasattr(taobao_antibot, 'check_cooldown'):
-                    remaining = taobao_antibot.check_cooldown()
-                    if remaining > 0:
-                        logger.info(f"Antibot cooldown: waiting {remaining:.0f}s...")
-                        time.sleep(remaining)
+            while pending_tasks:
+                group = EvidenceGroup(
+                    shop_name=shop_name,
+                    group_index=group_index,
+                    tasks=[],
+                )
 
-            try:
-                result = self.execute_group(group, video_duration)
-                results.append(result)
+                logger.info("=" * 70)
+                logger.info(f"Processing evidence group {executed_count + 1}: "
+                            f"{group.evidence_name} (remaining shop tasks: {len(pending_tasks)})")
+                logger.info("=" * 70)
 
-                if result.success:
-                    logger.info(f"Group '{group.evidence_name}' completed successfully "
-                                f"({result.valid_count} valid products)")
-                else:
-                    logger.warning(f"Group '{group.evidence_name}' failed: {result.reason}")
+                # Check antibot cooldown between groups
+                if taobao_antibot and executed_count > 0:
+                    if hasattr(taobao_antibot, 'check_cooldown'):
+                        remaining = taobao_antibot.check_cooldown()
+                        if remaining > 0:
+                            logger.info(f"Antibot cooldown: waiting {remaining:.0f}s...")
+                            time.sleep(remaining)
 
-            except KeyboardInterrupt:
-                logger.warning("Execution interrupted by user")
-                raise
-            except Exception as e:
-                logger.error(f"Group '{group.evidence_name}' error: {e}")
-                results.append(GroupResult(
-                    success=False,
-                    evidence_name=group.evidence_name,
-                    reason=str(e),
-                ))
+                try:
+                    result = self.execute_group(group, video_duration, task_source=pending_tasks)
+                    consumed_count = len(group.tasks)
+                    if consumed_count <= 0:
+                        raise RuntimeError(f"No tasks consumed for group '{group.evidence_name}'")
 
-            # Cleanup between groups
-            self._cleanup_between_groups()
+                    del pending_tasks[:consumed_count]
+                    results.append(result)
+                    executed_count += 1
+
+                    if result.success:
+                        logger.info(f"Group '{group.evidence_name}' completed successfully "
+                                    f"({result.valid_count} valid products)")
+                    else:
+                        logger.warning(f"Group '{group.evidence_name}' failed: {result.reason}")
+
+                except KeyboardInterrupt:
+                    logger.warning("Execution interrupted by user")
+                    raise
+                except Exception as e:
+                    logger.error(f"Group '{group.evidence_name}' error: {e}")
+                    results.append(GroupResult(
+                        success=False,
+                        evidence_name=group.evidence_name,
+                        reason=str(e),
+                    ))
+                    break
+                finally:
+                    # Cleanup between groups
+                    self._cleanup_between_groups()
+
+                group_index += 1
+
+        logger.info(f"Grouped execution complete: executed {executed_count} evidence groups "
+                    f"(planned chunks: {planned_total})")
 
         return results
 
-    def execute_group(self, group: EvidenceGroup, video_duration: int = 30) -> GroupResult:
+    def execute_group(self, group: EvidenceGroup, video_duration: int = 30,
+                      task_source: Optional[List] = None) -> GroupResult:
         """
         Execute one evidence group (Phase 1 + Phase 2).
 
@@ -120,7 +146,7 @@ class GroupedExecutor:
             GroupResult
         """
         # === Phase 1: Pre-screen and collect favorites (no recording) ===
-        valid_tasks = self._phase1_collect_favorites(group)
+        valid_tasks = self._phase1_collect_favorites(group, task_source=task_source)
 
         if not valid_tasks:
             return GroupResult(
@@ -136,7 +162,8 @@ class GroupedExecutor:
         # === Phase 2: Record evidence from favorites (with recording) ===
         return self._phase2_record_evidence(group, video_duration)
 
-    def _phase1_collect_favorites(self, group: EvidenceGroup) -> list:
+    def _phase1_collect_favorites(self, group: EvidenceGroup,
+                                  task_source: Optional[List] = None) -> list:
         """
         Phase 1: Pre-screen products and add valid ones to favorites.
 
@@ -150,7 +177,9 @@ class GroupedExecutor:
         Returns:
             List of valid Task objects
         """
-        logger.info(f"[Phase 1] Pre-screening {len(group.tasks)} products for '{group.shop_name}'")
+        tasks_to_process = task_source if task_source is not None else group.tasks
+        logger.info(f"[Phase 1] Pre-screening products for '{group.shop_name}' "
+                    f"(pending tasks: {len(tasks_to_process)})")
 
         # Environment check
         self.collector.stage_1_check_environment()
@@ -174,9 +203,13 @@ class GroupedExecutor:
         time.sleep(5)
 
         valid_tasks = []
+        processed_tasks = []
 
-        for i, task in enumerate(group.tasks):
-            logger.info(f"[Phase 1] Checking product {i + 1}/{len(group.tasks)}: {task.product_url}")
+        for task in tasks_to_process:
+            processed_tasks.append(task)
+            task.group_id = f"{group.shop_name}_{group.group_index}"
+            logger.info(f"[Phase 1] Checking product {len(processed_tasks)}/{len(tasks_to_process)}: "
+                        f"{task.product_url}")
 
             try:
                 # Navigate to product
@@ -224,6 +257,10 @@ class GroupedExecutor:
                     logger.warning(f"Failed to add to favorites: {task.product_url}")
                     valid_tasks.append(task)  # Still consider valid
 
+                if len(valid_tasks) >= self.group_size:
+                    logger.info(f"[Phase 1] Reached group capacity ({self.group_size} valid products)")
+                    break
+
                 # Kill and relaunch to reset to home page for next product
                 logger.info("Resetting Taobao to home page for next product...")
                 self.handler.adb.force_stop_app(package_name)
@@ -241,10 +278,21 @@ class GroupedExecutor:
         self.handler.adb.force_stop_app(package_name)
         time.sleep(1)
 
+        group.tasks = processed_tasks
+
         logger.info(f"[Phase 1] Complete: {len(valid_tasks)} valid, "
                     f"{len(group.invalid_tasks)} invalid")
 
         return valid_tasks
+
+    def _build_shop_task_queues(self, groups: List[EvidenceGroup]) -> "OrderedDict[str, List]":
+        """Flatten planned groups into per-shop pending task queues."""
+        shop_task_queues = OrderedDict()
+        for group in groups:
+            if group.shop_name not in shop_task_queues:
+                shop_task_queues[group.shop_name] = []
+            shop_task_queues[group.shop_name].extend(group.tasks)
+        return shop_task_queues
 
     def _phase2_record_evidence(self, group: EvidenceGroup,
                                  video_duration: int = 30) -> GroupResult:

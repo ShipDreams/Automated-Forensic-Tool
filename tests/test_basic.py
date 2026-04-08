@@ -7,6 +7,7 @@
 import unittest
 import sys
 from pathlib import Path
+from unittest.mock import patch
 
 # 添加 src 到路径
 sys.path.insert(0, str(Path(__file__).parent.parent / 'src'))
@@ -301,6 +302,183 @@ class TestCooldownManager(unittest.TestCase):
         finally:
             if os.path.exists(state_file):
                 os.remove(state_file)
+
+
+class TestGroupedExecutor(unittest.TestCase):
+    """测试分组执行器的动态补位逻辑"""
+
+    def test_invalid_link_does_not_break_shop_group_fill(self):
+        from task import Task
+        from task.grouped_executor import GroupResult, GroupedExecutor
+        from task.shop_grouper import EvidenceGroup
+
+        tasks = [
+            Task.from_url('https://example.com/24138', shop_name='测试3店'),
+            Task.from_url('https://example.com/24139', shop_name='测试3店', metadata={'invalid': True}),
+            Task.from_url('https://example.com/24141', shop_name='测试3店'),
+            Task.from_url('https://example.com/24142', shop_name='测试3店'),
+        ]
+
+        groups = [
+            EvidenceGroup(shop_name='测试3店', group_index=1, tasks=tasks[:3]),
+            EvidenceGroup(shop_name='测试3店', group_index=2, tasks=tasks[3:]),
+        ]
+
+        class StubExecutor(GroupedExecutor):
+            def _phase1_collect_favorites(self, group, task_source=None):
+                source = task_source if task_source is not None else group.tasks
+                processed = []
+                valid = []
+                for task in source:
+                    processed.append(task)
+                    task.group_id = f"{group.shop_name}_{group.group_index}"
+                    if task.metadata.get('invalid'):
+                        task.is_valid = False
+                        group.invalid_tasks.append(task)
+                    else:
+                        task.is_valid = True
+                        valid.append(task)
+                    if len(valid) >= self.group_size:
+                        break
+                group.tasks = processed
+                return valid
+
+            def _phase2_record_evidence(self, group, video_duration=30):
+                return GroupResult(
+                    success=True,
+                    evidence_name=group.evidence_name,
+                    valid_count=len(group.valid_tasks),
+                    invalid_count=len(group.invalid_tasks),
+                )
+
+            def _cleanup_between_groups(self):
+                return None
+
+        executor = StubExecutor(None, None, None, group_size=3)
+        results = executor.execute_all_groups(groups=groups, video_duration=30)
+
+        self.assertEqual(len(results), 1)
+        self.assertTrue(results[0].success)
+        self.assertEqual(results[0].valid_count, 3)
+        self.assertEqual(results[0].invalid_count, 1)
+        self.assertEqual(tasks[3].group_id, '测试3店_1')
+
+
+class TestTaobaoFavorites(unittest.TestCase):
+    """测试淘宝收藏夹点击策略"""
+
+    def test_click_favorite_item_uses_scroll_then_fixed_slot(self):
+        from platforms.taobao_favorites import TaobaoFavorites
+
+        class FakeADB:
+            def __init__(self):
+                self.taps = []
+                self.swipes = []
+
+            def get_screen_size(self):
+                return (1080, 2400)
+
+            def tap(self, x, y):
+                self.taps.append((x, y))
+                return True
+
+            def swipe(self, x1, y1, x2, y2, duration_ms=300):
+                self.swipes.append((x1, y1, x2, y2, duration_ms))
+                return True
+
+        adb = FakeADB()
+        favorites = TaobaoFavorites(adb, ui_locator=object())
+
+        with patch.object(favorites, '_sleep', return_value=None), \
+             patch.object(favorites, '_is_on_favorites_page', return_value=False):
+            success = favorites.click_favorite_item(2)
+
+        self.assertTrue(success)
+        self.assertEqual(len(adb.swipes), 2)
+        self.assertEqual(adb.swipes[0], (324, 1008, 324, 480, 340))
+        self.assertEqual(adb.swipes[1], (324, 1008, 324, 480, 340))
+        self.assertEqual(adb.taps, [(302, 576)])
+
+    def test_add_to_favorites_prefers_template_without_dump(self):
+        from platforms.taobao_favorites import TaobaoFavorites
+
+        class FakeImageLocator:
+            def __init__(self):
+                self.calls = []
+
+            def template_exists(self, name):
+                self.calls.append(('template_exists', name))
+                return name == 'favorite_btn'
+
+            def find_and_click(self, name, threshold=0.7, max_attempts=3):
+                self.calls.append(('find_and_click', name, threshold, max_attempts))
+                return True
+
+        class FakeLocator:
+            def __init__(self, img):
+                self.img = img
+
+            def _get_image_locator(self):
+                return self.img
+
+            def dump_and_parse(self):
+                raise AssertionError("dump_and_parse should not be called when template exists")
+
+        img = FakeImageLocator()
+        favorites = TaobaoFavorites(adb_controller=object(), ui_locator=FakeLocator(img))
+
+        with patch.object(favorites, '_sleep', return_value=None):
+            success = favorites.add_to_favorites()
+
+        self.assertTrue(success)
+        self.assertEqual(
+            img.calls,
+            [
+                ('template_exists', 'favorite_btn'),
+                ('find_and_click', 'favorite_btn', 0.7, 3),
+            ]
+        )
+
+
+class TestTaobaoHandler(unittest.TestCase):
+    """测试淘宝详情页视频处理策略"""
+
+    def test_replay_video_from_start_only_uses_image_unmute(self):
+        from platforms.taobao_handler import TaobaoHandler
+
+        class FakeImageLocator:
+            def __init__(self):
+                self.calls = []
+
+            def template_exists(self, name):
+                self.calls.append(('template_exists', name))
+                return True
+
+            def find_and_click(self, name, threshold=0.75, max_attempts=2):
+                self.calls.append(('find_and_click', name, threshold, max_attempts))
+                return True
+
+        class FakeLocator:
+            def __init__(self, img):
+                self.img = img
+
+            def _get_image_locator(self):
+                return self.img
+
+        img = FakeImageLocator()
+        handler = TaobaoHandler(adb_controller=object(), ui_locator=FakeLocator(img))
+
+        with patch.object(handler, '_sleep', return_value=None):
+            success = handler.replay_video_from_start()
+
+        self.assertTrue(success)
+        self.assertEqual(
+            img.calls,
+            [
+                ('template_exists', 'mute_btn'),
+                ('find_and_click', 'mute_btn', 0.7, 3),
+            ]
+        )
 
 
 if __name__ == '__main__':

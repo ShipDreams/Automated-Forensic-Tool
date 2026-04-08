@@ -30,7 +30,12 @@ class OCREngine:
         "登记机关", "经营期限", "经营期限至", "经营期限自", "营业期限",
         "经营场所", "住所", "成立日期", "核准日期", "社会信用代码",
     )
-    COMPANY_SUFFIXES = ("有限责任公司", "股份有限公司", "有限公司", "集团")
+    COMPANY_SUFFIXES = (
+        "有限责任公司", "股份有限公司", "有限公司", "集团",
+        "百货店", "商行", "经营部", "工作室", "商贸中心", "服务部",
+        "门市部", "便利店", "商店", "中心"
+    )
+    INDIVIDUAL_BUSINESS_MARKERS = ("个体工商户",)
 
     def _get_ocr(self):
         """Lazily initialize one PaddleOCR 3.4.0 instance per worker thread."""
@@ -183,7 +188,7 @@ class OCREngine:
         pattern = (
             r"(?:名\s*称|企业名称|公司名称)"
             r"[：:\s]*"
-            r"(.+?(?:有限责任公司|股份有限公司|有限公司|集团))"
+            r"(.+?(?:有限责任公司|股份有限公司|有限公司|集团|百货店|商行|经营部|工作室|商贸中心|服务部|门市部|便利店|商店|中心)(?:（个体工商户）|\(个体工商户\))?)"
         )
         match = re.search(pattern, text)
         if not match:
@@ -193,7 +198,8 @@ class OCREngine:
     def _match_unlabeled_company_name(self, text: str) -> Optional[str]:
         if self._contains_excluded_field(text):
             return None
-        if not any(keyword in text for keyword in self.COMPANY_SUFFIXES):
+        if not any(keyword in text for keyword in self.COMPANY_SUFFIXES) and \
+           not any(marker in text for marker in self.INDIVIDUAL_BUSINESS_MARKERS):
             return None
         cleaned = re.sub(r"^.*?(?:名称|企业名称|公司名称)[：:\s]*", "", text)
         return self._clean_company_name(cleaned)
@@ -210,6 +216,9 @@ class OCREngine:
         if self._contains_excluded_field(cleaned):
             return None
 
+        cleaned = re.sub(r"(（个体工商户）|\(个体工商户\))$", "", cleaned)
+        cleaned = cleaned.strip()
+
         for suffix in self.COMPANY_SUFFIXES:
             idx = cleaned.find(suffix)
             if idx != -1:
@@ -217,6 +226,15 @@ class OCREngine:
                 if self._contains_excluded_field(candidate):
                     return None
                 return candidate
+
+        # Some individual-business subjects are easiest to detect by their marker,
+        # while the actual主体名称 ends right before "(个体工商户)".
+        for marker in self.INDIVIDUAL_BUSINESS_MARKERS:
+            idx = cleaned.find(marker)
+            if idx > 0:
+                candidate = cleaned[:idx].rstrip("（()）")
+                if len(candidate) >= 4 and not self._contains_excluded_field(candidate):
+                    return candidate
         return None
 
 
