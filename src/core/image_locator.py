@@ -16,6 +16,13 @@ import cv2
 logger = logging.getLogger(__name__)
 
 
+def _get_subprocess_window_kwargs() -> dict:
+    """Hide child console windows on Windows GUI builds."""
+    if subprocess.os.name == 'nt':
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 class ImageLocator:
     """UI element locator based on OpenCV template matching."""
 
@@ -55,7 +62,12 @@ class ImageLocator:
                 device_args = ['-s', self.adb.device_id]
 
             cmd = ['adb'] + device_args + ['exec-out', 'screencap', '-p']
-            result = subprocess.run(cmd, capture_output=True, timeout=10)
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                timeout=10,
+                **_get_subprocess_window_kwargs(),
+            )
 
             if result.returncode != 0 or not result.stdout:
                 logger.warning("screencap failed or returned empty data")

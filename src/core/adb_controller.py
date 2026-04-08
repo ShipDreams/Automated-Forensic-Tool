@@ -17,6 +17,13 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
+def _get_subprocess_window_kwargs() -> dict:
+    """Hide child console windows on Windows GUI builds."""
+    if subprocess.os.name == 'nt':
+        return {"creationflags": subprocess.CREATE_NO_WINDOW}
+    return {}
+
+
 class ADBController:
     """ADB Controller - wraps all ADB commands"""
 
@@ -55,7 +62,8 @@ class ADBController:
                 ["adb", "devices"],
                 capture_output=True,
                 text=True,
-                timeout=10
+                timeout=10,
+                **_get_subprocess_window_kwargs(),
             )
 
             devices = []
@@ -933,7 +941,8 @@ class ADBController:
             cmd,
             capture_output=True,
             text=True,
-            timeout=30
+            timeout=30,
+            **_get_subprocess_window_kwargs(),
         )
 
 
