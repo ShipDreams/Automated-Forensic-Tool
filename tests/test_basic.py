@@ -439,6 +439,45 @@ class TestTaobaoFavorites(unittest.TestCase):
             ]
         )
 
+    def test_add_to_favorites_retries_once_after_ad_popup_close(self):
+        from platforms.taobao_favorites import TaobaoFavorites
+
+        class FakeImageLocator:
+            def __init__(self):
+                self.calls = []
+                self.favorite_clicks = 0
+
+            def template_exists(self, name):
+                self.calls.append(('template_exists', name))
+                return name in {'favorite_btn', 'del_ads'}
+
+            def find_and_click(self, name, threshold=0.7, max_attempts=3):
+                self.calls.append(('find_and_click', name, threshold, max_attempts))
+                if name == 'favorite_btn':
+                    self.favorite_clicks += 1
+                    return self.favorite_clicks == 2
+                return True
+
+        class FakeLocator:
+            def __init__(self, img):
+                self.img = img
+
+            def _get_image_locator(self):
+                return self.img
+
+            def dump_and_parse(self):
+                raise AssertionError("dump_and_parse should not be called in template retry path")
+
+        img = FakeImageLocator()
+        favorites = TaobaoFavorites(adb_controller=object(), ui_locator=FakeLocator(img))
+
+        with patch.object(favorites, '_sleep', return_value=None):
+            success = favorites.add_to_favorites()
+
+        self.assertTrue(success)
+        self.assertIn(('find_and_click', 'del_ads', 0.85, 1), img.calls)
+        self.assertEqual(img.favorite_clicks, 2)
+
 
 class TestTaobaoHandler(unittest.TestCase):
     """测试淘宝详情页视频处理策略"""
@@ -479,6 +518,41 @@ class TestTaobaoHandler(unittest.TestCase):
                 ('find_and_click', 'mute_btn', 0.7, 3),
             ]
         )
+
+    def test_view_shop_info_retries_once_after_ad_popup_close(self):
+        from platforms.taobao_handler import TaobaoHandler
+
+        class FakeImageLocator:
+            def __init__(self):
+                self.calls = []
+                self.shop_clicks = 0
+
+            def template_exists(self, name):
+                self.calls.append(('template_exists', name))
+                return name in {'shop_btn', 'del_ads'}
+
+            def find_and_click(self, name, threshold=0.75, max_attempts=3):
+                self.calls.append(('find_and_click', name, threshold, max_attempts))
+                if name == 'shop_btn':
+                    self.shop_clicks += 1
+                    return self.shop_clicks == 2
+                return True
+
+        class FakeLocator:
+            def __init__(self, img):
+                self.img = img
+
+            def _get_image_locator(self):
+                return self.img
+
+        handler = TaobaoHandler(adb_controller=object(), ui_locator=FakeLocator(FakeImageLocator()))
+
+        with patch.object(handler, '_sleep_after_click', return_value=None), \
+             patch.object(handler, '_sleep', return_value=None), \
+             patch.object(handler, '_navigate_to_shop_home', return_value=True):
+            success = handler.view_shop_info()
+
+        self.assertTrue(success)
 
 
 if __name__ == '__main__':

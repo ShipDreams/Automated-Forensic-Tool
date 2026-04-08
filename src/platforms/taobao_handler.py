@@ -40,6 +40,27 @@ class TaobaoHandler(BasePlatformHandler):
         # Chinese keyword for app store search (matches actual app name)
         return "淘宝"
 
+    def _dismiss_ad_popup_once(self, context: str) -> bool:
+        """
+        Best-effort single attempt to close a Taobao ad popup via template matching.
+
+        Returns:
+            True if ad close button matched and clicked, False otherwise.
+        """
+        logger.warning(f"{context}: target element not found, trying ad popup close once...")
+        img_locator = self.locator._get_image_locator()
+        if not img_locator or not img_locator.template_exists("del_ads"):
+            logger.warning(f"{context}: ad popup close template not available")
+            return False
+
+        if not img_locator.find_and_click("del_ads", threshold=0.85, max_attempts=1):
+            logger.warning(f"{context}: ad popup close template not matched")
+            return False
+
+        logger.info(f"{context}: ad popup close button clicked")
+        self._sleep(1200, 1800)
+        return True
+
     def open_app_from_store(self, wait_time: int = 6) -> bool:
         """Search Taobao in app store."""
         logger.info("=" * 60)
@@ -107,35 +128,26 @@ class TaobaoHandler(BasePlatformHandler):
             logger.info(t('log.waiting_home_load'))
             self._sleep(2500, 3500)
 
-            # Dump UI hierarchy and find search box (with retry)
-            max_dump_attempts = 3
-            root = None
-
-            for attempt in range(1, max_dump_attempts + 1):
-                logger.info(t('log.finding_search_box', attempt=attempt, max=max_dump_attempts))
-                root = self.locator.dump_and_parse()
-                if root:
-                    # Check if search box is available
-                    search_box = self.locator.find_taobao_search_box(root)
-                    if search_box:
-                        break
-                    # Search box not found, maybe popup is blocking
-                    logger.warning(f"[Attempt {attempt}] Search box not in dump, pressing back to dismiss popup")
-                    self.adb.press_back()
-                    self._sleep(1500, 2500)
-                    root = None
-                else:
-                    logger.warning(t('log.ui_dump_failed_retry'))
-                    self._sleep(1500, 2500)
-
+            root = self.locator.dump_and_parse()
             if not root:
                 logger.error(t('log.cannot_get_ui_hierarchy'))
                 return False
 
             search_box = self.locator.find_taobao_search_box(root)
             if not search_box:
-                logger.error(t('log.search_box_not_found'))
-                return False
+                if not self._dismiss_ad_popup_once("Taobao home search box"):
+                    logger.error(t('log.search_box_not_found'))
+                    return False
+
+                root = self.locator.dump_and_parse()
+                if not root:
+                    logger.error(t('log.cannot_get_ui_hierarchy'))
+                    return False
+
+                search_box = self.locator.find_taobao_search_box(root)
+                if not search_box:
+                    logger.error(t('log.search_box_not_found'))
+                    return False
 
             # Click search box to activate input
             logger.info(t('log.clicking_search_box'))
@@ -293,6 +305,16 @@ class TaobaoHandler(BasePlatformHandler):
                 self._sleep(2500, 3500)
                 return self._navigate_to_shop_home(root=None)
 
+            if self._dismiss_ad_popup_once("Product detail shop button"):
+                if img_locator.find_and_click("shop_btn", threshold=0.75, max_attempts=1):
+                    logger.info("Shop button clicked via image recognition after closing ad popup")
+                    self._sleep_after_click()
+                    self._sleep(2500, 3500)
+                    return self._navigate_to_shop_home(root=None)
+
+            logger.error(t('log.shop_button_not_found'))
+            return False
+
         root = self.locator.dump_and_parse()
         if not root:
             logger.error(t('log.cannot_get_ui_hierarchy'))
@@ -367,24 +389,23 @@ class TaobaoHandler(BasePlatformHandler):
                 self.set_qualification_issue("资质查看失败")
                 return False
 
-            # 点击"资质证照"按钮（带重试机制，店铺主页可能加载较慢）
+            # 点击"资质证照"按钮（如果首次未找到，只尝试一次广告弹窗关闭）
             logger.info(t('log.finding_qualification_button'))
-            max_retries = 3
             qualification_btn = None
-            for attempt in range(1, max_retries + 1):
-                root = self.locator.dump_and_parse()
-                if not root:
-                    logger.warning(f"[重试 {attempt}/{max_retries}] 无法获取店铺主页UI，等待后重试...")
-                    self._sleep(1500 + attempt * 500, 2000 + attempt * 500)
-                    continue
-
+            root = self.locator.dump_and_parse()
+            if root:
                 qualification_btn = self.locator.find_qualification_button(root)
-                if qualification_btn:
-                    logger.info(f"[重试 {attempt}/{max_retries}] 成功找到资质证照按钮")
-                    break
-                else:
-                    logger.warning(f"[重试 {attempt}/{max_retries}] 未找到资质证照按钮，等待页面加载后重试...")
-                    self._sleep(1500 + attempt * 500, 2000 + attempt * 500)
+
+            if not qualification_btn:
+                if not self._dismiss_ad_popup_once("Shop home qualification button"):
+                    logger.warning(t('log.qualification_button_not_found'))
+                    logger.warning(t('log.qualification_not_found_reason'))
+                    self.set_qualification_issue("资质查看失败")
+                    return False
+
+                root = self.locator.dump_and_parse()
+                if root:
+                    qualification_btn = self.locator.find_qualification_button(root)
 
             if not qualification_btn:
                 logger.warning(t('log.qualification_button_not_found'))

@@ -52,6 +52,22 @@ class TaobaoFavorites:
             return False
         return img.find_and_click(template_name, threshold=threshold, max_attempts=max_attempts)
 
+    def _dismiss_ad_popup_once(self, context: str) -> bool:
+        """
+        Best-effort single attempt to close Taobao ad popup via template matching.
+
+        Returns:
+            True if ad close button matched and clicked, False otherwise.
+        """
+        logger.warning(f"{context}: target element not found, trying ad popup close once...")
+        if not self._click_by_template_first("del_ads", threshold=0.85, max_attempts=1):
+            logger.warning(f"{context}: ad popup close template not matched")
+            return False
+
+        logger.info(f"{context}: ad popup close button clicked")
+        self._sleep(1200, 1800)
+        return True
+
     def _sleep(self, min_ms: int = 800, max_ms: int = 1500):
         """Human-like random delay."""
         import random
@@ -249,11 +265,9 @@ class TaobaoFavorites:
             self._sleep(1000, 1500)
             return True
 
-        root = self.locator.dump_and_parse()
-        if root:
-            fav_btn = self.locator.find_favorite_button(root)
-            if fav_btn and self.locator.click_element(fav_btn):
-                logger.info("Product added to favorites via XML")
+        if self._dismiss_ad_popup_once("Product detail favorite button"):
+            if self._click_by_template_first("favorite_btn", threshold=0.7):
+                logger.info("Product added to favorites via image recognition after closing ad popup")
                 self._sleep(1000, 1500)
                 return True
 
