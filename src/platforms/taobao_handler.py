@@ -369,10 +369,12 @@ class TaobaoHandler(BasePlatformHandler):
         logger.info("=" * 60)
         logger.info(t('log.view_qualification'))
         logger.info("=" * 60)
+        self.reset_qualification_context(cleanup_file=True)
 
         try:
             # First enter shop page
             if not self.view_shop_info():
+                self.set_qualification_issue("资质查看失败")
                 return False
 
             # 点击"资质证照"按钮（带重试机制，店铺主页可能加载较慢）
@@ -397,10 +399,12 @@ class TaobaoHandler(BasePlatformHandler):
             if not qualification_btn:
                 logger.warning(t('log.qualification_button_not_found'))
                 logger.warning(t('log.qualification_not_found_reason'))
+                self.set_qualification_issue("资质查看失败")
                 return False
 
             if not self.locator.click_element(qualification_btn):
                 logger.error(t('log.click_qualification_failed'))
+                self.set_qualification_issue("资质查看失败")
                 return False
 
             self._sleep_after_click()
@@ -410,6 +414,7 @@ class TaobaoHandler(BasePlatformHandler):
 
             # Detect captcha after qualification page load
             if not self._handle_captcha_if_detected():
+                self.set_qualification_issue("资质查看失败")
                 return False
 
             # Stay to record qualification info
@@ -418,11 +423,22 @@ class TaobaoHandler(BasePlatformHandler):
 
             # Screenshot 4: Qualification page
             self.take_screenshot(t('log.screenshot_qualification'))
+            logger.info(t('log.ocr_capture_start'))
+            local_capture = self.adb.take_screenshot_to_file()
+            if local_capture:
+                self.set_pending_qualification_capture(local_capture)
+                from core.ocr_engine import start_company_name_extraction_async
+                self.set_pending_qualification_ocr_future(
+                    start_company_name_extraction_async(local_capture)
+                )
+            else:
+                logger.warning(t('log.ocr_capture_save_failed'))
 
             logger.info(t('log.qualification_view_complete'))
             return True
 
         except Exception as e:
+            self.set_qualification_issue("资质查看失败")
             logger.error(t('log.view_qualification_failed', error=e))
             return False
 

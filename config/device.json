@@ -15,5 +15,8 @@
     "browser_load": 8,
     "taobao_load": 8,
     "video_start": 3
+  },
+  "ocr_settings": {
+    "keep_debug_screenshots": false
   }
 }

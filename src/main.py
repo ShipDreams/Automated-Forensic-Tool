@@ -247,6 +247,7 @@ class EvidenceCollector:
         logger.info("*" * 60)
 
         recording_started = False  # Flag whether recording has started
+        handler = None
 
         try:
             # Stage 1: Environment check
@@ -311,7 +312,12 @@ class EvidenceCollector:
             if not self.stage_9_export_evidence(evidence_name=evidence_name):
                 error = t('log.export_evidence_failed')
                 logger.error(error)
+                if handler and getattr(handler, 'get_platform_name', lambda: '')() == 'taobao':
+                    handler.reset_qualification_context(cleanup_file=True)
                 return False, error
+
+            if handler and getattr(handler, 'get_platform_name', lambda: '')() == 'taobao':
+                self._finalize_handler_qualification_ocr(handler)
 
             logger.info("*" * 60)
             logger.info(t('log.forensic_complete'))
@@ -344,6 +350,19 @@ class EvidenceCollector:
                 self.recorder.cancel_recording()
             except Exception as e:
                 logger.error(t('log.cancel_recording_failed', error=e))
+
+    def _finalize_handler_qualification_ocr(self, handler) -> tuple:
+        """Run OCR after evidence export and log the result."""
+        try:
+            company_name, note = handler.finalize_qualification_ocr()
+            if company_name:
+                logger.info(t('log.ocr_company_name_detected', company_name=company_name))
+            if note:
+                logger.warning(t('log.ocr_note', note=note))
+            return company_name, note
+        except Exception as e:
+            logger.warning(t('log.ocr_finalize_exception', error=e))
+            return None, f"OCR异常: {e}"
 
     def _run_legacy_taobao_process(
         self,

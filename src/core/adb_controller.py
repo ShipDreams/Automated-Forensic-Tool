@@ -5,8 +5,10 @@ Provides basic capabilities for Android device control.
 """
 
 import subprocess
+import tempfile
 import time
 import logging
+from pathlib import Path
 from typing import Optional, List, Tuple
 
 from locales import t
@@ -629,6 +631,50 @@ class ADBController:
         except Exception as e:
             logger.error(t('log.screenshot_failed', error=e))
             return False
+
+    def take_screenshot_to_file(self, local_path: str = None) -> Optional[str]:
+        """
+        Take a screenshot and pull it to a local file.
+
+        Args:
+            local_path: Optional local file path. If omitted, generate a temp path.
+
+        Returns:
+            Local screenshot path on success, otherwise None
+        """
+        safe_id = (self.device_id or "default").replace(':', '_').replace('/', '_')
+        temp_root = Path(tempfile.gettempdir()) / "automated_forensic_tool" / "ocr" / safe_id
+        temp_root.mkdir(parents=True, exist_ok=True)
+
+        target_path = Path(local_path) if local_path else temp_root / f"screenshot_{int(time.time() * 1000)}.png"
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+
+        remote_path = f"/sdcard/ocr_capture_{int(time.time() * 1000)}.png"
+
+        try:
+            if not self.take_screenshot(remote_path):
+                logger.warning(t('log.ocr_device_capture_failed', path=remote_path))
+                return None
+
+            if not self.pull_file(remote_path, str(target_path)):
+                logger.warning(t('log.ocr_pull_local_failed', path=target_path))
+                try:
+                    target_path.unlink()
+                except FileNotFoundError:
+                    pass
+                return None
+
+            logger.info(t('log.ocr_screenshot_saved_local', path=target_path))
+            return str(target_path)
+        except Exception as e:
+            logger.error(t('log.screenshot_failed', error=e))
+            try:
+                target_path.unlink()
+            except FileNotFoundError:
+                pass
+            return None
+        finally:
+            self.delete_file(remote_path)
 
     def force_stop_app(self, package_name: str) -> bool:
         """

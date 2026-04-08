@@ -5,12 +5,36 @@ Defines unified interface for e-commerce platform forensics.
 """
 
 from abc import ABC, abstractmethod
+from concurrent.futures import Future
 from typing import Optional, Callable
+import json
 import logging
+from pathlib import Path
 
 from locales import t
 
 logger = logging.getLogger(__name__)
+_OCR_DEBUG_SCREENSHOT_KEEP_CACHE: Optional[bool] = None
+
+
+def _should_keep_ocr_debug_screenshots() -> bool:
+    """Load OCR debug screenshot retention flag from config/device.json."""
+    global _OCR_DEBUG_SCREENSHOT_KEEP_CACHE
+    if _OCR_DEBUG_SCREENSHOT_KEEP_CACHE is not None:
+        return _OCR_DEBUG_SCREENSHOT_KEEP_CACHE
+
+    config_path = Path(__file__).parent.parent.parent / 'config' / 'device.json'
+    keep_files = False
+    try:
+        if config_path.exists():
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            keep_files = bool(config.get('ocr_settings', {}).get('keep_debug_screenshots', False))
+    except Exception as e:
+        logger.warning(t('log.ocr_debug_config_load_failed', error=e))
+
+    _OCR_DEBUG_SCREENSHOT_KEEP_CACHE = keep_files
+    return keep_files
 
 
 class BasePlatformHandler(ABC):
@@ -36,6 +60,9 @@ class BasePlatformHandler(ABC):
         self.antibot = antibot
         # Screenshot callback function (set by EvidenceCollector)
         self._screenshot_callback: Optional[Callable[[], bool]] = None
+        self._pending_qualification_capture_path: Optional[str] = None
+        self._pending_qualification_ocr_future: Optional[Future] = None
+        self._qualification_issue: Optional[str] = None
 
     def set_screenshot_callback(self, callback: Callable[[], bool]):
         """Set screenshot callback function."""
@@ -54,6 +81,113 @@ class BasePlatformHandler(ABC):
             self._screenshot_callback()
         else:
             logger.warning(t('log.screenshot_callback_not_set'))
+
+    def reset_qualification_context(self, cleanup_file: bool = False):
+        """Reset cached qualification screenshot and issue state."""
+        capture_path = self._pending_qualification_capture_path
+        self._pending_qualification_capture_path = None
+        self._pending_qualification_ocr_future = None
+        self._qualification_issue = None
+
+        if cleanup_file and capture_path and not _should_keep_ocr_debug_screenshots():
+            try:
+                Path(capture_path).unlink()
+                logger.info(t('log.ocr_screenshot_removed', path=capture_path))
+            except FileNotFoundError:
+                pass
+            except Exception as e:
+                logger.debug(f"Failed to remove stale qualification capture '{capture_path}': {e}")
+        elif cleanup_file and capture_path:
+            logger.info(t('log.ocr_screenshot_kept', path=capture_path))
+
+    def set_pending_qualification_capture(self, image_path: Optional[str]):
+        """Cache local screenshot path for post-export OCR."""
+        self._pending_qualification_capture_path = image_path
+        if image_path:
+            logger.info(t('log.ocr_screenshot_cached', path=image_path))
+        else:
+            logger.warning(t('log.ocr_screenshot_cache_empty'))
+
+    def set_pending_qualification_ocr_future(self, future: Optional[Future]):
+        """Cache background OCR future for post-export result collection."""
+        self._pending_qualification_ocr_future = future
+
+    def set_qualification_issue(self, issue: Optional[str]):
+        """Cache qualification warning note for post-export handling."""
+        self._qualification_issue = issue
+
+    def consume_pending_qualification_capture(self) -> Optional[str]:
+        """Return and clear cached qualification screenshot path."""
+        image_path = self._pending_qualification_capture_path
+        self._pending_qualification_capture_path = None
+        return image_path
+
+    def consume_pending_qualification_ocr_future(self) -> Optional[Future]:
+        """Return and clear cached OCR future."""
+        future = self._pending_qualification_ocr_future
+        self._pending_qualification_ocr_future = None
+        return future
+
+    def consume_qualification_issue(self) -> Optional[str]:
+        """Return and clear cached qualification issue note."""
+        issue = self._qualification_issue
+        self._qualification_issue = None
+        return issue
+
+    def finalize_qualification_ocr(self) -> tuple[Optional[str], Optional[str]]:
+        """
+        Run OCR against cached qualification screenshot after evidence export.
+
+        Returns:
+            (company_name, note)
+        """
+        qualification_issue = self.consume_qualification_issue()
+        capture_path = self.consume_pending_qualification_capture()
+        ocr_future = self.consume_pending_qualification_ocr_future()
+
+        logger.info(t('log.ocr_finalize_started'))
+
+        if qualification_issue:
+            logger.warning(t('log.ocr_finalize_skipped_issue', issue=qualification_issue))
+            if capture_path and not _should_keep_ocr_debug_screenshots():
+                try:
+                    Path(capture_path).unlink()
+                    logger.info(t('log.ocr_screenshot_removed', path=capture_path))
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to remove qualification capture '{capture_path}': {e}")
+            elif capture_path:
+                logger.info(t('log.ocr_screenshot_kept', path=capture_path))
+            return None, qualification_issue
+
+        if not capture_path:
+            logger.warning(t('log.ocr_finalize_skipped_missing_capture'))
+            return None, "OCR截图缺失"
+
+        try:
+            logger.info(t('log.ocr_finalize_using_screenshot', path=capture_path))
+            if ocr_future is None:
+                from core.ocr_engine import extract_company_name_with_status
+                logger.warning(t('log.ocr_async_missing_fallback'))
+                result = extract_company_name_with_status(capture_path)
+            else:
+                logger.info(t('log.ocr_async_wait_start'))
+                result = ocr_future.result()
+                logger.info(t('log.ocr_async_wait_done'))
+            logger.info(t('log.ocr_finalize_finished'))
+            return result
+        finally:
+            if _should_keep_ocr_debug_screenshots():
+                logger.info(t('log.ocr_screenshot_kept', path=capture_path))
+            else:
+                try:
+                    Path(capture_path).unlink()
+                    logger.info(t('log.ocr_screenshot_removed', path=capture_path))
+                except FileNotFoundError:
+                    pass
+                except Exception as e:
+                    logger.debug(f"Failed to remove qualification capture '{capture_path}': {e}")
 
     @abstractmethod
     def get_platform_name(self) -> str:
@@ -291,6 +425,7 @@ class BasePlatformHandler(ABC):
 
         platform_name = self.get_platform_display_name()
         logger.info(t('log.start_platform_forensic', platform=platform_name))
+        self.reset_qualification_context(cleanup_file=True)
 
         # Step 1: Open app from app store
         logger.info(t('log.step_open_app_store', platform=platform_name))
@@ -345,9 +480,9 @@ class BasePlatformHandler(ABC):
         logger.info(t('log.step_view_qualification'))
         qualification_viewed = self.view_qualification()
         if not qualification_viewed:
-            error = t('log.qualification_view_failed')
-            logger.error(error)
-            return False, error
+            if not self._qualification_issue:
+                self.set_qualification_issue("资质查看失败")
+            logger.warning(t('log.qualification_view_failed_continue'))
 
         logger.info(t('log.platform_forensic_complete', platform=platform_name))
         return True, None

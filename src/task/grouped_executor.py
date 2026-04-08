@@ -266,8 +266,11 @@ class GroupedExecutor:
                     f"for '{group.evidence_name}'")
 
         company_name = None
+        result_note = None
 
         try:
+            self.handler.reset_qualification_context(cleanup_file=True)
+
             # Step 1: Start Shishibao recording
             if not self.collector.stage_2_start_recording():
                 return GroupResult(
@@ -302,6 +305,8 @@ class GroupedExecutor:
                 # Click the ith item in favorites
                 if not self.favorites.click_favorite_item(i):
                     logger.warning(f"Failed to click favorite item {i}")
+                    if i == total_valid - 1:
+                        self.handler.set_qualification_issue("资质查看失败")
                     continue
 
                 # Play video
@@ -317,14 +322,14 @@ class GroupedExecutor:
                 # Only for the last product: view qualification certificates
                 if i == total_valid - 1:
                     logger.info("Last product in group: viewing qualification certificates")
-                    qual_result = self.handler.view_qualification()
-                    # Note: OCR integration (Requirement 6) will extract company_name here
+                    self.handler.view_qualification()
 
                 # Go back to favorites list
                 self.favorites.go_back_to_favorites_list()
 
             # Step 6: Stop recording and save evidence
             if not self.collector.stage_9_export_evidence(evidence_name=group.evidence_name):
+                self.handler.reset_qualification_context(cleanup_file=True)
                 return GroupResult(
                     success=False,
                     evidence_name=group.evidence_name,
@@ -333,9 +338,15 @@ class GroupedExecutor:
                     company_name=company_name,
                 )
 
+            company_name, result_note = self.handler.finalize_qualification_ocr()
+            if result_note:
+                logger.warning(t('log.ocr_phase2_note', note=result_note))
+            if company_name:
+                logger.info(t('log.ocr_phase2_company_name', company_name=company_name))
+
             # Mark all valid tasks as completed
             for task in group.valid_tasks:
-                self._mark_task_completed(task, company_name)
+                self._mark_task_completed(task, company_name, result_note)
 
             return GroupResult(
                 success=True,
@@ -357,6 +368,8 @@ class GroupedExecutor:
         except Exception:
             pass
 
+        self.handler.reset_qualification_context(cleanup_file=True)
+
         return GroupResult(
             success=False,
             evidence_name=group.evidence_name,
@@ -373,14 +386,18 @@ class GroupedExecutor:
             except Exception as e:
                 logger.warning(f"Failed to update DB for task {task.id}: {e}")
 
-    def _mark_task_completed(self, task, company_name: Optional[str] = None):
+    def _mark_task_completed(self, task, company_name: Optional[str] = None,
+                             result_note: Optional[str] = None):
         """Mark a task as completed, optionally write to database."""
         if self.db_loader:
             try:
                 db_id = task.metadata.get('db_id') or task.id
+                result_text = "取证成功"
+                if result_note:
+                    result_text = f"{result_text}；{result_note}"
                 self.db_loader.mark_completed(
                     int(db_id),
-                    result="取证成功",
+                    result=result_text,
                     company_name=company_name or '',
                 )
             except Exception as e:

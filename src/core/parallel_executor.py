@@ -443,6 +443,7 @@ class ParallelExecutor:
 
         recording_started = False
         task_success = False
+        handler = None
 
         try:
             # Check cooldown status
@@ -500,9 +501,21 @@ class ParallelExecutor:
             # Stop recording
             if not recorder.stop_recording(evidence_name=task.evidence_name):
                 logger.error(t('log.device_stop_recording_failed', device_id=device_id))
+                if handler and handler.get_platform_name() == 'taobao':
+                    handler.reset_qualification_context(cleanup_file=True)
                 return False, "Failed to stop recording"
 
             adb.disable_visual_feedback()
+
+            if handler and handler.get_platform_name() == 'taobao':
+                try:
+                    company_name, note = handler.finalize_qualification_ocr()
+                    if company_name:
+                        logger.info(t('log.device_ocr_company_name', device_id=device_id, company_name=company_name))
+                    if note:
+                        logger.warning(t('log.device_ocr_note', device_id=device_id, note=note))
+                except Exception as e:
+                    logger.warning(t('log.device_ocr_finalize_failed', device_id=device_id, error=e))
 
             task_success = True
             return True, None
