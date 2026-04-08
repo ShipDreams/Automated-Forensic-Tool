@@ -1145,9 +1145,15 @@ def launch_gui():
     webview.start(debug=False)
 
 
-if __name__ == '__main__':
+def main():
+    """Program entry point for standalone GUI executable."""
+    multiprocessing.freeze_support()
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
     )
     launch_gui()
+
+
+if __name__ == '__main__':
+    main()
