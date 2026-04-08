@@ -163,6 +163,21 @@ class TaskManager:
         self.add_tasks(tasks)
         return len(tasks)
 
+    def load_tasks_from_db(self, db_loader, batch_size: int = 100) -> int:
+        """
+        Load tasks from database.
+
+        Args:
+            db_loader: DBTaskLoader instance
+            batch_size: Maximum number of tasks to load
+
+        Returns:
+            Number of tasks loaded
+        """
+        tasks = db_loader.load_batch(batch_size)
+        self.add_tasks(tasks)
+        return len(tasks)
+
     def load_pending_tasks(self) -> int:
         """
         Load all pending tasks.

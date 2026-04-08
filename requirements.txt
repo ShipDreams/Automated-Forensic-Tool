@@ -18,6 +18,20 @@ pywebview>=4.0
 # - libnotify (Linux only, for desktop notifications)
 #   Linux 安装: apt-get install libnotify-bin
 
+# Image recognition (OpenCV)
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Database (MySQL)
+pymysql>=1.1.0
+
+# OCR (PaddleOCR) - optional
+# paddleocr>=2.6.0
+# paddlepaddle>=2.4.0
+
+# Windows packaging - optional
+# pyinstaller>=5.0
+
 # 可选依赖（用于开发和测试）
 # pytest>=7.0.0
 # black>=22.0.0

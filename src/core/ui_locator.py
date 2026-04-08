@@ -105,6 +105,8 @@ class UILocator:
         self.dump_counter = 0
         self.debug_dir = Path(f"./temp/{safe_id}/debug_dumps")
         self.debug_dir.mkdir(parents=True, exist_ok=True)
+        # Image locator (lazy init)
+        self.image_locator = None
 
     def dump_and_parse(self) -> Optional[ET.Element]:
         """
@@ -1226,6 +1228,163 @@ class UILocator:
             return element
 
         logger.warning(t('log.qualification_button_not_found'))
+        return None
+
+    def _get_image_locator(self):
+        """Lazy-initialize ImageLocator (requires opencv-python)."""
+        if self.image_locator is None:
+            try:
+                from .image_locator import ImageLocator
+                self.image_locator = ImageLocator(self.adb)
+            except ImportError:
+                logger.debug("opencv-python not available, image locator disabled")
+        return self.image_locator
+
+    def find_with_image_fallback(self, root, xml_finder_func, template_name: str,
+                                  threshold: float = 0.8) -> Optional[Tuple[int, int]]:
+        """
+        Try XML-based element finding first, fall back to image matching.
+
+        Args:
+            root: XML root node (can be None)
+            xml_finder_func: Function that takes root and returns UIElement or None
+            template_name: Template image name for fallback
+            threshold: Image matching confidence threshold
+
+        Returns:
+            (x, y) center coordinates or None
+        """
+        # Try XML first
+        if root is not None:
+            element = xml_finder_func(root)
+            if element:
+                center = element.get_center()
+                if center:
+                    return center
+
+        # Fall back to image recognition
+        img_locator = self._get_image_locator()
+        if img_locator:
+            match = img_locator.find_template(template_name, threshold)
+            if match:
+                return (match[0], match[1])
+
+        return None
+
+    def click_with_image_fallback(self, root, xml_finder_func, template_name: str,
+                                   threshold: float = 0.8) -> bool:
+        """
+        Try XML-based click first, fall back to image-based click.
+
+        Returns:
+            Whether click was successful
+        """
+        # Try XML first
+        if root is not None:
+            element = xml_finder_func(root)
+            if element:
+                return self.click_element(element)
+
+        # Fall back to image recognition
+        img_locator = self._get_image_locator()
+        if img_locator:
+            return img_locator.find_and_click(template_name, threshold)
+
+        return False
+
+    # ========== Favorites-related locator methods ==========
+
+    def find_my_taobao_tab(self, root: ET.Element) -> Optional[UIElement]:
+        """Find bottom navigation '我的淘宝' tab."""
+        logger.info("Searching for '我的淘宝' tab")
+        screen_size = self.adb.get_screen_size()
+
+        for node in root.iter():
+            text = node.attrib.get('text', '')
+            desc = node.attrib.get('content-desc', '')
+            if text == '我的淘宝' or '我的淘宝' in desc:
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    # Must be in bottom navigation area
+                    if screen_size:
+                        _, height = screen_size
+                        if bounds[1] > height * 0.85:
+                            logger.info(f"Found '我的淘宝' tab, bounds={bounds}")
+                            return element
+                    else:
+                        logger.info(f"Found '我的淘宝' tab, bounds={bounds}")
+                        return element
+
+        logger.warning("'我的淘宝' tab not found")
+        return None
+
+    def find_favorites_entry(self, root: ET.Element) -> Optional[UIElement]:
+        """Find '收藏' entry on My Taobao page."""
+        logger.info("Searching for favorites entry")
+
+        # Try content-desc first (more reliable on this page)
+        for node in root.iter():
+            desc = node.attrib.get('content-desc', '')
+            if desc == '收藏':
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    logger.info(f"Found favorites entry by content-desc, bounds={bounds}")
+                    return element
+
+        # Try text
+        for keyword in ['收藏', '我的收藏', '收藏夹']:
+            element = self.find_element_by_text(root, keyword, exact=True)
+            if element:
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    logger.info(f"Found favorites entry by text '{keyword}', bounds={bounds}")
+                    return element
+
+        logger.warning("Favorites entry not found")
+        return None
+
+    def find_favorite_button(self, root: ET.Element) -> Optional[UIElement]:
+        """Find favorite/collect button on product detail page."""
+        logger.info("Searching for favorite button")
+
+        # Strategy 1: resource-id
+        for node in root.iter():
+            res_id = node.attrib.get('resource-id', '').lower()
+            if any(kw in res_id for kw in ['collect', 'favorite', 'fav']):
+                element = UIElement(node)
+                bounds = element.get_bounds()
+                if bounds and bounds != (0, 0, 0, 0):
+                    logger.info(f"Found favorite button by resource-id: {res_id}")
+                    return element
+
+        # Strategy 2: content-desc
+        for keyword in ['收藏', '加入收藏', '喜欢']:
+            for node in root.iter():
+                desc = node.attrib.get('content-desc', '')
+                if keyword in desc:
+                    element = UIElement(node)
+                    bounds = element.get_bounds()
+                    if bounds and bounds != (0, 0, 0, 0):
+                        logger.info(f"Found favorite button by desc '{desc}'")
+                        return element
+
+        # Strategy 3: text "收藏" in bottom bar area
+        screen_size = self.adb.get_screen_size()
+        if screen_size:
+            _, height = screen_size
+            for node in root.iter():
+                text = node.attrib.get('text', '')
+                if text == '收藏':
+                    element = UIElement(node)
+                    bounds = element.get_bounds()
+                    if bounds and bounds != (0, 0, 0, 0):
+                        if bounds[1] > height * 0.85:
+                            logger.info(f"Found favorite button by text in bottom bar")
+                            return element
+
+        logger.warning("Favorite button not found")
         return None
 
     def detect_captcha(self, root: ET.Element) -> bool:

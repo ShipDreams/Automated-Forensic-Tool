@@ -298,10 +298,28 @@ input[type="number"]:focus, select:focus {
         </div>
     </div>
 
-    <!-- Task File -->
+    <!-- Task Source -->
     <div class="card">
         <div class="card-title" data-i18n="card_task_file"></div>
         <div class="form-group">
+            <label data-i18n="label_task_source"></label>
+            <select id="taskSource" onchange="onTaskSourceChange()">
+                <option value="database" data-i18n-opt="opt_from_database"></option>
+                <option value="file" data-i18n-opt="opt_from_file"></option>
+            </select>
+        </div>
+        <div id="dbSourceGroup">
+            <div class="form-group">
+                <label data-i18n="label_batch_size"></label>
+                <input type="number" id="batchSize" value="100" min="1" max="1000" step="10">
+                <div class="hint" data-i18n="hint_batch_size"></div>
+            </div>
+            <div class="form-group">
+                <button class="btn btn-default" id="btnTestDb" onclick="testDbConnection()" data-i18n="btn_test_db"></button>
+                <span class="hint" id="dbTestResult"></span>
+            </div>
+        </div>
+        <div id="fileSourceGroup" class="form-group" style="display:none;">
             <label data-i18n="label_select_file"></label>
             <div class="file-select">
                 <div class="file-path" id="filePath" data-i18n-default="no_file_selected"></div>
@@ -354,6 +372,11 @@ input[type="number"]:focus, select:focus {
             <label data-i18n="label_video_duration"></label>
             <input type="number" id="videoDuration" value="30" min="5" max="300" step="5">
         </div>
+        <div class="form-group">
+            <label data-i18n="label_group_size"></label>
+            <input type="number" id="groupSize" value="3" min="1" max="10" step="1">
+            <div class="hint" data-i18n="hint_group_size"></div>
+        </div>
     </div>
 
     <!-- Start Button -->
@@ -380,10 +403,19 @@ input[type="number"]:focus, select:focus {
 const LANG = {
     zh: {
         title: 'Android 自动化取证工具',
-        card_task_file: '任务文件',
+        card_task_file: '任务来源',
+        label_task_source: '任务来源',
+        opt_from_file: '从文件加载',
+        opt_from_database: '从数据库加载',
         label_select_file: '选择任务文件 (JSON / CSV / TXT)',
         no_file_selected: '未选择文件',
         btn_browse: '浏览...',
+        label_batch_size: '每批加载任务数',
+        hint_batch_size: '从数据库每次读取的待取证任务数量。',
+        btn_test_db: '测试数据库连接',
+        db_test_ok: '连接成功！待取证任务: {count} 条',
+        db_test_fail: '连接失败: {error}',
+        db_test_no_config: '未找到 config/database.json，请先配置数据库。',
         card_antibot: '防封控设置',
         label_protection_range: '防封控时间范围（分钟）',
         hint_protection: '最小 5 分钟。每个周期在此范围内随机取值，自动分配为模拟浏览 + 冷却时段。',
@@ -398,6 +430,8 @@ const LANG = {
         opt_load_balance: '负载均衡',
         opt_random: '随机分配',
         label_video_duration: '视频录制时长（秒）',
+        label_group_size: '每条证据最大商品数',
+        hint_group_size: '按店铺分组，每组最多收录的商品数。',
         btn_start: '开始执行',
         btn_stop: '停止执行',
         card_log: '执行日志',
@@ -416,10 +450,19 @@ const LANG = {
     },
     en: {
         title: 'Android Automated Forensic Tool',
-        card_task_file: 'Task File',
+        card_task_file: 'Task Source',
+        label_task_source: 'Task source',
+        opt_from_file: 'Load from file',
+        opt_from_database: 'Load from database',
         label_select_file: 'Select task file (JSON / CSV / TXT)',
         no_file_selected: 'No file selected',
         btn_browse: 'Browse...',
+        label_batch_size: 'Batch size',
+        hint_batch_size: 'Number of pending tasks to load from database per batch.',
+        btn_test_db: 'Test DB Connection',
+        db_test_ok: 'Connected! Pending tasks: {count}',
+        db_test_fail: 'Connection failed: {error}',
+        db_test_no_config: 'config/database.json not found. Please configure database first.',
         card_antibot: 'Anti-bot Protection Settings',
         label_protection_range: 'Protection duration range (minutes)',
         hint_protection: 'Minimum 5 min. Each cycle randomly picks a value in this range, then auto-splits into browse simulation + cooldown segments.',
@@ -434,6 +477,8 @@ const LANG = {
         opt_load_balance: 'Load Balance',
         opt_random: 'Random',
         label_video_duration: 'Video recording duration (seconds)',
+        label_group_size: 'Max products per evidence',
+        hint_group_size: 'Group by shop, max products per group.',
         btn_start: 'Start Execution',
         btn_stop: 'Stop Execution',
         card_log: 'Execution Log',
@@ -511,6 +556,42 @@ function onModeChange() {
     }
 }
 
+function onTaskSourceChange() {
+    const source = document.getElementById('taskSource').value;
+    const fileGroup = document.getElementById('fileSourceGroup');
+    const dbGroup = document.getElementById('dbSourceGroup');
+    if (source === 'database') {
+        fileGroup.style.display = 'none';
+        dbGroup.style.display = 'block';
+    } else {
+        fileGroup.style.display = 'block';
+        dbGroup.style.display = 'none';
+    }
+}
+
+async function testDbConnection() {
+    const btn = document.getElementById('btnTestDb');
+    const result = document.getElementById('dbTestResult');
+    btn.disabled = true;
+    result.textContent = '...';
+    result.style.color = '#999';
+
+    try {
+        const res = await pywebview.api.test_db_connection();
+        if (res && res.success) {
+            result.textContent = T('db_test_ok', {count: res.pending_count});
+            result.style.color = '#52c41a';
+        } else {
+            result.textContent = T('db_test_fail', {error: res ? res.error : 'Unknown'});
+            result.style.color = '#ff4d4f';
+        }
+    } catch (e) {
+        result.textContent = T('db_test_fail', {error: String(e)});
+        result.style.color = '#ff4d4f';
+    }
+    btn.disabled = false;
+}
+
 async function selectFile() {
     const result = await pywebview.api.select_task_file();
     if (result) {
@@ -523,7 +604,8 @@ async function selectFile() {
 }
 
 function validate() {
-    if (!selectedFilePath) {
+    const taskSource = document.getElementById('taskSource').value;
+    if (taskSource === 'file' && !selectedFilePath) {
         alert(T('alert_no_file'));
         return false;
     }
@@ -554,10 +636,13 @@ async function startExecution() {
 
     const params = {
         task_file: selectedFilePath,
+        task_source: document.getElementById('taskSource').value,
         protection_min: parseInt(document.getElementById('protectionMin').value),
         protection_max: parseInt(document.getElementById('protectionMax').value),
         exec_mode: document.getElementById('execMode').value,
         video_duration: parseInt(document.getElementById('videoDuration').value),
+        group_size: parseInt(document.getElementById('groupSize').value),
+        batch_size: parseInt(document.getElementById('batchSize').value) || 100,
         device_ids: document.getElementById('deviceIds').value.trim(),
         strategy: document.getElementById('strategy').value,
         lang: currentLang === 'zh' ? 'zh_CN' : 'en_US',
@@ -716,6 +801,26 @@ class LauncherAPI:
             return result[0]
         return None
 
+    def test_db_connection(self):
+        """Test database connection and return pending task count."""
+        try:
+            db_config = Path(__file__).parent.parent / 'config' / 'database.json'
+            if not db_config.exists():
+                return {'success': False, 'error': 'config/database.json not found'}
+
+            # Ensure src is in path
+            src_dir = str(Path(__file__).parent)
+            if src_dir not in sys.path:
+                sys.path.insert(0, src_dir)
+
+            from task.db_task_loader import DBTaskLoader
+            loader = DBTaskLoader(str(db_config))
+            count = loader.get_pending_count()
+            loader.close()
+            return {'success': True, 'pending_count': count}
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
+
     def start_execution(self, params):
         """Start forensic execution in a subprocess (so SIGINT can interrupt it)."""
         if self._state == 'running':
@@ -849,11 +954,14 @@ def _subprocess_worker(params, log_queue):
     logger = logging.getLogger(__name__)
 
     try:
-        task_file = params['task_file']
+        task_file = params.get('task_file', '')
+        task_source = params.get('task_source', 'file')
         protection_min = params.get('protection_min', 25)
         protection_max = params.get('protection_max', 35)
         exec_mode = params.get('exec_mode', 'sequential')
         video_duration = params.get('video_duration', 30)
+        group_size = params.get('group_size', 3)
+        batch_size = params.get('batch_size', 100)
         device_ids_str = params.get('device_ids', '')
         strategy = params.get('strategy', 'round_robin')
         lang = params.get('lang', 'en_US')
@@ -862,22 +970,49 @@ def _subprocess_worker(params, log_queue):
         from locales import set_language
         set_language(lang)
 
-        # Validate file exists
-        if not Path(task_file).exists():
+        # Validate file exists (file mode only)
+        if task_source == 'file' and not Path(task_file).exists():
             log_queue.put({'type': 'error', 'error': f'Task file not found: {task_file}'})
             return
 
         # Build protection duration override
         protection_duration = [protection_min, protection_max]
 
-        logger.info(f"Starting execution: file={task_file}, protection={protection_min}-{protection_max}min, mode={exec_mode}")
+        logger.info(f"Starting execution: source={task_source}, protection={protection_min}-{protection_max}min, mode={exec_mode}, group_size={group_size}")
 
         # Need to ensure src is in path for imports
         src_dir = str(Path(__file__).parent)
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
 
-        if exec_mode == 'parallel':
+        # Database mode
+        if task_source == 'database':
+            from main import run_grouped_batch_mode
+            db_config = str(Path(__file__).parent.parent / 'config' / 'database.json')
+
+            success = run_grouped_batch_mode(
+                task_file=None,
+                device_id=None,
+                video_duration=video_duration,
+                enable_antibot=True,
+                protection_duration=protection_duration,
+                group_size=group_size,
+                db_config_path=db_config,
+                batch_size=batch_size,
+            )
+        # Grouped mode (file source, group_size > 0)
+        elif group_size > 0:
+            from main import run_grouped_batch_mode
+
+            success = run_grouped_batch_mode(
+                task_file=task_file,
+                device_id=None,
+                video_duration=video_duration,
+                enable_antibot=True,
+                protection_duration=protection_duration,
+                group_size=group_size,
+            )
+        elif exec_mode == 'parallel':
             from core.parallel_executor import run_parallel_mode
 
             device_ids = None
@@ -915,10 +1050,84 @@ def _subprocess_worker(params, log_queue):
         log_queue.put({'type': 'error', 'error': str(e)})
 
 
+# ==================== WebView2 Check ====================
+
+def _check_webview2_available() -> bool:
+    """Check if WebView2 Runtime is available (Windows only)."""
+    if sys.platform != 'win32':
+        return True  # Not needed on macOS/Linux
+
+    try:
+        import winreg
+        # Check both 32-bit and 64-bit registry locations
+        registry_paths = [
+            (winreg.HKEY_LOCAL_MACHINE,
+             r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-13A6A2E75E11}"),
+            (winreg.HKEY_LOCAL_MACHINE,
+             r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-13A6A2E75E11}"),
+            (winreg.HKEY_CURRENT_USER,
+             r"SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEE-13A6A2E75E11}"),
+        ]
+
+        for hkey, path in registry_paths:
+            try:
+                key = winreg.OpenKey(hkey, path)
+                version, _ = winreg.QueryValueEx(key, "pv")
+                winreg.CloseKey(key)
+                if version:
+                    logger.info(f"WebView2 Runtime found: v{version}")
+                    return True
+            except (FileNotFoundError, OSError):
+                continue
+
+        return False
+    except ImportError:
+        # winreg not available (non-Windows)
+        return True
+
+
+def _install_webview2():
+    """Attempt to install WebView2 Runtime from bundled bootstrapper."""
+    import subprocess
+
+    # Look for bootstrapper in common locations
+    bootstrapper_paths = [
+        Path(__file__).parent.parent / "MicrosoftEdgeWebview2Setup.exe",
+        Path(__file__).parent.parent / "build" / "resources" / "MicrosoftEdgeWebview2Setup.exe",
+        Path(sys.executable).parent / "MicrosoftEdgeWebview2Setup.exe",
+    ]
+
+    for path in bootstrapper_paths:
+        if path.exists():
+            logger.info(f"Installing WebView2 from: {path}")
+            try:
+                result = subprocess.run(
+                    [str(path), "/silent", "/install"],
+                    timeout=120,
+                )
+                return result.returncode == 0
+            except Exception as e:
+                logger.error(f"WebView2 installation failed: {e}")
+                return False
+
+    logger.warning("WebView2 bootstrapper not found")
+    return False
+
+
 # ==================== Launch Function ====================
 
 def launch_gui():
     """Launch the pywebview GUI window."""
+    # Check WebView2 on Windows
+    if sys.platform == 'win32' and not _check_webview2_available():
+        logger.warning("WebView2 Runtime not detected, attempting installation...")
+        if not _install_webview2():
+            print("ERROR: WebView2 Runtime is required but not installed.")
+            print("Please download and install it from:")
+            print("  https://developer.microsoft.com/en-us/microsoft-edge/webview2/")
+            print("Or run the bundled installer: MicrosoftEdgeWebview2Setup.exe")
+            sys.exit(1)
+
     api = LauncherAPI()
 
     window = webview.create_window(

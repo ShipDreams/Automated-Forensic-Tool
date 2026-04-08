@@ -79,6 +79,11 @@ class Task:
     # Evidence name (appended to default timestamp filename when saving recording)
     evidence_name: str = ""
 
+    # Shop grouping (for grouped batch mode)
+    shop_name: str = ""
+    is_valid: Optional[bool] = None  # None=not checked, True=valid, False=invalid
+    group_id: str = ""
+
     # Metadata
     metadata: Dict[str, Any] = field(default_factory=dict)
 

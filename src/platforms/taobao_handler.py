@@ -5,7 +5,9 @@ Implements complete forensic workflow for Taobao/Tmall products.
 """
 
 import time
+import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 from locales import t
@@ -105,24 +107,25 @@ class TaobaoHandler(BasePlatformHandler):
             logger.info(t('log.waiting_home_load'))
             self._sleep(2500, 3500)
 
-            # Try to close possible popups
-            logger.info(t('log.closing_popups'))
-            self.adb.press_back()
-            self._sleep(800, 1200)
-
             # Dump UI hierarchy and find search box (with retry)
-            max_dump_attempts = 2
+            max_dump_attempts = 3
             root = None
 
             for attempt in range(1, max_dump_attempts + 1):
                 logger.info(t('log.finding_search_box', attempt=attempt, max=max_dump_attempts))
                 root = self.locator.dump_and_parse()
                 if root:
-                    break
-
-                if attempt < max_dump_attempts:
-                    logger.warning(t('log.ui_dump_failed_retry'))
+                    # Check if search box is available
+                    search_box = self.locator.find_taobao_search_box(root)
+                    if search_box:
+                        break
+                    # Search box not found, maybe popup is blocking
+                    logger.warning(f"[Attempt {attempt}] Search box not in dump, pressing back to dismiss popup")
                     self.adb.press_back()
+                    self._sleep(1500, 2500)
+                    root = None
+                else:
+                    logger.warning(t('log.ui_dump_failed_retry'))
                     self._sleep(1500, 2500)
 
             if not root:
@@ -209,15 +212,11 @@ class TaobaoHandler(BasePlatformHandler):
 
     def replay_video_from_start(self) -> bool:
         """
-        Replay video from start (drag progress bar to 0 seconds).
+        Replay video from start.
 
-        Taobao product videos usually auto-play, this method:
-        1. If video is paused, click play first
-        2. Unmute audio
-        3. Drag progress bar to start position
-
-        Returns:
-            Whether successful
+        Since unmute now uses fast image recognition (~0.5s), the video
+        hasn't advanced far. We unmute first, then optionally drag progress
+        bar only as fallback if needed.
         """
         logger.info("=" * 60)
         logger.info(t('log.replay_video_from_start'))
@@ -232,36 +231,37 @@ class TaobaoHandler(BasePlatformHandler):
                 self.locator.click_element(play_btn, apply_offset=False)
                 self._sleep(1500, 2500)
 
-        # Unmute audio
+        # Unmute audio (image recognition first, fast enough that video barely advanced)
         self.unmute_video(max_attempts=2)
 
-        # Drag progress bar to start
+        # Drag progress bar to start as optional step
         logger.info(t('log.dragging_progress_bar'))
-        success = self.locator.drag_video_progress_to_start(max_attempts=2)
+        success = self.locator.drag_video_progress_to_start(max_attempts=1)
 
         if success:
             logger.info(t('log.video_replay_started'))
         else:
             logger.warning(t('log.progress_bar_drag_failed'))
 
-        # After dragging, check if video ended (play button visible means paused/ended)
-        self._sleep(500, 1000)
-        root = self.locator.dump_and_parse()
-        if root:
-            play_btn = self.locator.find_element_by_id(root, "com.taobao.taobao:id/iv_play_btn")
-            if play_btn:
-                logger.info(t('log.play_button_detected_clicking'))
-                self.locator.click_element(play_btn, apply_offset=False)
-                self._sleep(1000, 1500)
-
         return True  # Continue flow even if drag failed
 
     def unmute_video(self, max_attempts: int = 2) -> bool:
-        """Unmute video audio."""
+        """Unmute video audio. Tries image recognition first (fast), then XML dump fallback."""
         logger.info("=" * 60)
         logger.info(t('log.unmute_video'))
         logger.info("=" * 60)
 
+        # Try image recognition first (fast, ~0.5s vs XML dump ~3-5s)
+        img_locator = self.locator._get_image_locator()
+        if img_locator and img_locator.template_exists("mute_btn"):
+            logger.info("Trying image recognition for mute button...")
+            if img_locator.find_and_click("mute_btn", threshold=0.75, max_attempts=2):
+                logger.info(t('log.video_unmuted'))
+                self._sleep(1000, 1500)
+                return True
+            logger.info("Image recognition failed, falling back to XML dump...")
+
+        # Fallback: XML dump approach
         for attempt in range(1, max_attempts + 1):
             logger.info(t('log.finding_volume_button', attempt=attempt, max=max_attempts))
 
@@ -301,6 +301,15 @@ class TaobaoHandler(BasePlatformHandler):
 
         shop_btn = self.locator.find_shop_button(root)
         if not shop_btn:
+            # Image fallback for shop button
+            img_locator = self.locator._get_image_locator()
+            if img_locator and img_locator.template_exists("shop_btn"):
+                logger.info("Trying image recognition for shop button...")
+                if img_locator.find_and_click("shop_btn", threshold=0.75):
+                    logger.info("Shop button clicked via image recognition")
+                    self._sleep_after_click()
+                    self._sleep(2500, 3500)
+                    return self._navigate_to_shop_home(root=None)
             logger.error(t('log.shop_button_not_found'))
             return False
 
@@ -313,6 +322,10 @@ class TaobaoHandler(BasePlatformHandler):
         logger.info(t('log.waiting_shop_page'))
         self._sleep(2500, 3500)
 
+        return self._navigate_to_shop_home(root=None)
+
+    def _navigate_to_shop_home(self, root=None) -> bool:
+        """Click shop name to enter shop home page (extracted from view_shop_info)."""
         # 点击店铺名称文本进入店铺主页（带重试机制，复杂页面可能加载较慢）
         logger.info(t('log.clicking_shop_name'))
         max_retries = 5
@@ -412,3 +425,55 @@ class TaobaoHandler(BasePlatformHandler):
         except Exception as e:
             logger.error(t('log.view_qualification_failed', error=e))
             return False
+
+    def check_product_validity(self) -> bool:
+        """
+        Check if current product page shows a valid (non-expired) product.
+
+        Dumps UI hierarchy and checks for invalid product keywords.
+
+        Returns:
+            True if product is valid, False if expired/removed/invalid
+        """
+        root = self.locator.dump_and_parse()
+        if not root:
+            logger.warning("Cannot get UI hierarchy for validity check, assuming invalid")
+            return False
+
+        # Load keywords from config
+        invalid_keywords = self._get_invalid_product_keywords()
+
+        for node in root.iter():
+            text = node.attrib.get('text', '')
+            desc = node.attrib.get('content-desc', '')
+            for keyword in invalid_keywords:
+                if keyword in text or keyword in desc:
+                    logger.info(f"Product invalid: found keyword '{keyword}' in text='{text}' desc='{desc}'")
+                    return False
+
+        logger.info("Product validity check passed")
+        return True
+
+    def _get_invalid_product_keywords(self) -> list:
+        """Load invalid product keywords from config."""
+        try:
+            config_path = Path(__file__).parent.parent.parent / "config" / "platform_rules" / "taobao.json"
+            with open(config_path, 'r', encoding='utf-8') as f:
+                config = json.load(f)
+            keywords = config.get('invalid_product_keywords', [])
+            if keywords:
+                return keywords
+        except Exception as e:
+            logger.debug(f"Failed to load config keywords: {e}")
+
+        # Default fallback
+        return [
+            "商品已下架", "宝贝已下架", "该商品已下架",
+            "商品过期", "宝贝已过期", "已失效",
+            "没有找到相应的商品", "该宝贝已不存在",
+            "商品不存在", "页面不存在", "抱歉，没有找到",
+            "该链接已失效", "商品已被删除",
+            "卖家已关闭交易", "该交易已关闭",
+            "宝贝不存在", "商品信息已过期",
+            "宝贝不在了", "商品过期不存在"
+        ]

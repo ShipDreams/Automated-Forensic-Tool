@@ -238,7 +238,7 @@ class ScreenRecorder:
 
             # Step 3: Input evidence name into filename field (if provided)
             if evidence_name:
-                logger.info(f"准备在文件名输入框追加证据名称: {evidence_name}")
+                logger.info(f"准备输入证据名称: {evidence_name}")
                 time.sleep(2)  # Wait for save page to load
                 root = self.locator.dump_and_parse()
                 if root:
@@ -250,13 +250,43 @@ class ScreenRecorder:
                         bounds = filename_input.get_bounds()
                         if bounds:
                             x1, y1, x2, y2 = bounds
-                            # Click the right edge of the input field to position cursor at end of timestamp
-                            right_x = x2 - 10
+                            center_x = (x1 + x2) // 2
                             center_y = (y1 + y2) // 2
-                            logger.info(f"点击文件名输入框右侧 ({right_x}, {center_y})")
-                            self.adb.tap(right_x, center_y)
-                            time.sleep(1)
-                            # Input evidence name (appended after default timestamp)
+                            # Click input field to focus
+                            logger.info(f"点击文件名输入框 ({center_x}, {center_y})")
+                            self.adb.tap(center_x, center_y)
+                            time.sleep(0.5)
+                            # Select all existing text (Ctrl+A equivalent on Android)
+                            logger.info("全选输入框内已有文字...")
+                            self.adb.press_key(123)  # KEYCODE_MOVE_END - move cursor to end
+                            time.sleep(0.3)
+                            # Select all: use key combination
+                            self.adb._run_adb_command([
+                                'shell', 'input', 'keyevent', '--longpress', '123'
+                            ])  # Long press END to extend selection
+                            time.sleep(0.2)
+                            # Alternative: triple-click to select all text in input field
+                            self.adb.tap(center_x, center_y)
+                            time.sleep(0.1)
+                            self.adb.tap(center_x, center_y)
+                            time.sleep(0.1)
+                            self.adb.tap(center_x, center_y)
+                            time.sleep(0.3)
+                            # Delete selected text
+                            self.adb.press_key(67)  # KEYCODE_DEL
+                            time.sleep(0.5)
+                            # If triple-click didn't select all, use MOVE_HOME + SHIFT+MOVE_END
+                            # to ensure all text is cleared
+                            self.adb.press_key(122)  # KEYCODE_MOVE_HOME
+                            time.sleep(0.1)
+                            # Hold SHIFT and press END to select all
+                            self.adb._run_adb_command([
+                                'shell', 'input', 'keycombination', '59', '123'
+                            ])  # SHIFT + MOVE_END
+                            time.sleep(0.2)
+                            self.adb.press_key(67)  # KEYCODE_DEL
+                            time.sleep(0.5)
+                            # Now input the evidence name
                             logger.info(f"输入证据名称: {evidence_name}")
                             self.adb.input_text(evidence_name)
                             time.sleep(1)

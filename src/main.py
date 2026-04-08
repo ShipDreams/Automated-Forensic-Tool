@@ -83,32 +83,24 @@ class EvidenceCollector:
         else:
             self.router = None
 
-        # Shishibao floating screenshot button position cache
-        self._screenshot_button_pos = None
-
     # ==================== Screenshot Feature ====================
 
     def click_screenshot_button(self) -> bool:
         """
         Click Shishibao floating screenshot button.
 
-        First call gets and caches button position, subsequent calls use cached coordinates.
+        Re-locates button position on every call to avoid stale coordinates.
 
         Returns:
             Whether click was successful
         """
         try:
-            # Get button position on first call
-            if self._screenshot_button_pos is None:
-                pos = self.adb.get_overlay_button_position()
-                if not pos:
-                    logger.warning(t('log.screenshot_button_not_found'))
-                    return False
-                self._screenshot_button_pos = pos
-                logger.info(t('log.screenshot_button_cached', pos=pos))
+            pos = self.adb.get_overlay_button_position()
+            if not pos:
+                logger.warning(t('log.screenshot_button_not_found'))
+                return False
 
-            # Click floating button
-            x, y = self._screenshot_button_pos
+            x, y = pos
             logger.info(t('log.click_screenshot_button', x=x, y=y))
             if self.adb.tap(x, y):
                 logger.info(t('log.screenshot_button_clicked'))
@@ -610,6 +602,144 @@ def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 
     return task_manager.stats.get('failed', 0) == 0
 
 
+def run_grouped_batch_mode(task_file: str = None, device_id: str = None,
+                            video_duration: int = 30, enable_antibot: bool = True,
+                            protection_duration: list = None, group_size: int = 3,
+                            db_config_path: str = None, batch_size: int = 100):
+    """
+    Grouped batch mode: Group tasks by shop, pre-screen via favorites, then record.
+
+    This is the new default mode that replaces run_batch_mode for shop-grouped evidence.
+    Tasks can be loaded from either a file or a database.
+
+    Args:
+        task_file: Task file path (JSON/CSV/TXT). None when using database mode.
+        device_id: Device ID (optional)
+        video_duration: Video recording duration per product (seconds)
+        enable_antibot: Whether to enable anti-detection
+        protection_duration: Protection duration range [min, max] in minutes
+        group_size: Maximum products per evidence group
+        db_config_path: Database config path. If set, loads tasks from database.
+        batch_size: Number of tasks to load from database
+    """
+    logger.info("=" * 60)
+    logger.info("Grouped Batch Mode")
+    logger.info(f"Group size: {group_size}, Video duration: {video_duration}s")
+    logger.info("=" * 60)
+
+    # Initialize collector
+    collector = EvidenceCollector(device_id=device_id, enable_antibot=enable_antibot)
+
+    # Initialize Taobao antibot
+    taobao_antibot = None
+    if enable_antibot and TaobaoAntiBot:
+        try:
+            taobao_config = _load_taobao_antibot_config()
+            if protection_duration:
+                taobao_config['protection_duration_minutes'] = protection_duration
+            taobao_antibot = TaobaoAntiBot(
+                adb_controller=collector.adb,
+                ui_locator=collector.locator,
+                config=taobao_config,
+                device_id=collector.adb.device_id
+            )
+            logger.info(t('log.taobao_antibot_enabled'))
+
+            if taobao_antibot.is_cooling_down():
+                remaining = taobao_antibot.get_remaining_cooldown()
+                if remaining and remaining.total_seconds() > 0:
+                    logger.warning(t('log.device_in_cooldown', seconds=int(remaining.total_seconds())))
+                    time.sleep(remaining.total_seconds())
+        except Exception as e:
+            logger.warning(t('log.taobao_antibot_init_failed', error=e))
+            taobao_antibot = None
+
+    # Load tasks
+    from task.shop_grouper import ShopGrouper
+    from task.grouped_executor import GroupedExecutor
+    from platforms.taobao_handler import TaobaoHandler
+    from platforms.taobao_favorites import TaobaoFavorites
+
+    db_loader = None
+    tasks = []
+
+    if db_config_path:
+        # Load from database
+        from task.db_task_loader import DBTaskLoader
+        db_loader = DBTaskLoader(config_path=db_config_path)
+        tasks = db_loader.load_batch(batch_size)
+        if not tasks:
+            logger.error("No pending tasks in database")
+            db_loader.close()
+            return False
+        # Mark tasks as running
+        for task in tasks:
+            db_id = task.metadata.get('db_id')
+            if db_id:
+                db_loader.mark_running(int(db_id), collector.adb.device_id or '')
+    elif task_file:
+        # Load from file
+        task_manager = TaskManager()
+        count = task_manager.load_tasks_from_file(task_file)
+        if count == 0:
+            logger.error(t('log.no_tasks_loaded'))
+            return False
+        tasks = task_manager.get_all_tasks()
+    else:
+        logger.error("No task source specified (need task_file or db_config_path)")
+        return False
+
+    logger.info(f"Loaded {len(tasks)} tasks")
+
+    # Group tasks by shop
+    grouper = ShopGrouper(group_size=group_size)
+    groups = grouper.group_tasks(tasks)
+
+    if not groups:
+        logger.error("No groups created from tasks")
+        return False
+
+    # Initialize handler and favorites
+    handler = TaobaoHandler(collector.adb, collector.locator, collector.antibot)
+    # Note: screenshot callback is NOT set here — phase 1 must not trigger screenshots.
+    # GroupedExecutor sets it at the start of phase 2 (when Shishibao recording is active).
+    favorites = TaobaoFavorites(collector.adb, collector.locator, collector.antibot)
+
+    # Create executor
+    executor = GroupedExecutor(
+        collector=collector,
+        favorites=favorites,
+        handler=handler,
+        db_loader=db_loader,
+    )
+
+    # Execute all groups
+    try:
+        results = executor.execute_all_groups(
+            groups=groups,
+            video_duration=video_duration,
+            taobao_antibot=taobao_antibot,
+        )
+    except KeyboardInterrupt:
+        logger.warning("User interrupted grouped batch execution")
+        results = []
+    finally:
+        # Cleanup
+        collector.adb.restore_original_ime()
+        if db_loader:
+            db_loader.close()
+
+    # Summary
+    success_count = sum(1 for r in results if r.success)
+    fail_count = sum(1 for r in results if not r.success)
+    logger.info("=" * 60)
+    logger.info(f"Grouped batch complete: {success_count} success, {fail_count} failed "
+                f"out of {len(groups)} groups")
+    logger.info("=" * 60)
+
+    return fail_count == 0
+
+
 def main():
     """Main function"""
     parser = argparse.ArgumentParser(
@@ -634,6 +764,12 @@ Examples:
 
   # Disable anti-detection (skip cooldown check)
   python main.py --no-antibot "https://item.taobao.com/item.htm?id=xxx"
+
+  # Grouped batch mode (shop-based evidence grouping)
+  python main.py --batch tasks.csv --grouped --group-size 3
+
+  # Database mode (load tasks from MySQL)
+  python main.py --db --grouped --group-size 3
 
   # Set language
   python main.py --lang zh_CN "https://item.taobao.com/item.htm?id=xxx"
@@ -696,6 +832,27 @@ Examples:
         default=None,
         help='Language setting (default: auto-detect from environment)'
     )
+    parser.add_argument(
+        '--grouped',
+        action='store_true',
+        help='Enable grouped batch mode (group by shop, favorites-based)'
+    )
+    parser.add_argument(
+        '--group-size',
+        type=int,
+        default=3,
+        help='Maximum products per evidence group (default: 3)'
+    )
+    parser.add_argument(
+        '--db',
+        action='store_true',
+        help='Load tasks from database instead of file'
+    )
+    parser.add_argument(
+        '--db-config',
+        default=None,
+        help='Path to database config JSON (default: config/database.json)'
+    )
 
     args = parser.parse_args()
 
@@ -710,7 +867,33 @@ Examples:
         sys.exit(0)
 
     # Batch mode
-    if args.batch:
+    if args.batch or args.db:
+        # Database mode
+        if args.db:
+            db_config = args.db_config
+            if not db_config:
+                db_config = str(Path(__file__).parent.parent / 'config' / 'database.json')
+            success = run_grouped_batch_mode(
+                task_file=None,
+                device_id=args.device,
+                video_duration=args.play_duration,
+                enable_antibot=not args.no_antibot,
+                group_size=args.group_size,
+                db_config_path=db_config,
+            )
+            sys.exit(0 if success else 1)
+
+        # Grouped mode (from file)
+        if args.grouped:
+            success = run_grouped_batch_mode(
+                task_file=args.batch,
+                device_id=args.device,
+                video_duration=args.play_duration,
+                enable_antibot=not args.no_antibot,
+                group_size=args.group_size,
+            )
+            sys.exit(0 if success else 1)
+
         # Parallel mode
         if args.parallel:
             from core.parallel_executor import run_parallel_mode

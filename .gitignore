@@ -42,3 +42,6 @@ reports/
 
 # 文档
 docs/
+
+# 数据库配置（含密码）
+config/database.json
