@@ -27,6 +27,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).parent.parent
 SRC_DIR = PROJECT_ROOT / "src"
 CONFIG_DIR = PROJECT_ROOT / "config"
+TOOLS_DIR = PROJECT_ROOT / "tools"
 BUILD_DIR = PROJECT_ROOT / "build"
 DIST_DIR = PROJECT_ROOT / "dist"
 OUTPUT_DIR = DIST_DIR / "ForensicTool"
@@ -176,6 +177,16 @@ def copy_additional_files():
         dest = output_app_dir / "MicrosoftEdgeWebview2Setup.exe"
         shutil.copy2(WEBVIEW2_BOOTSTRAPPER_FILE, dest)
         print("  Copied WebView2 Bootstrapper")
+
+    # Copy runtime tools required by the packaged app
+    adb_keyboard_apk = TOOLS_DIR / "ADBKeyboard.apk"
+    if adb_keyboard_apk.exists():
+        tools_dest = output_app_dir / "tools"
+        tools_dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(adb_keyboard_apk, tools_dest / "ADBKeyboard.apk")
+        print("  Copied tools/ADBKeyboard.apk")
+    else:
+        print("  WARNING: tools/ADBKeyboard.apk not found, packaged app cannot install ADBKeyboard")
 
     print("Additional files copied")
 
