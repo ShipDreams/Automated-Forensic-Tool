@@ -265,6 +265,7 @@ input[type="number"]:focus, select:focus {
 
 .status-dot.idle { background: #d9d9d9; }
 .status-dot.running { background: #52c41a; animation: pulse 1.5s infinite; }
+.status-dot.stopping { background: #faad14; animation: pulse 1.5s infinite; }
 .status-dot.error { background: #ff4d4f; }
 .status-dot.done { background: #52c41a; }
 
@@ -437,6 +438,7 @@ const LANG = {
         card_log: '执行日志',
         status_idle: '空闲',
         status_running: '运行中',
+        status_stopping: '正在停止',
         status_done: '已完成',
         status_error: '错误',
         alert_no_file: '请先选择任务文件。',
@@ -445,6 +447,7 @@ const LANG = {
         alert_min_gt_max: '最小时间不能大于最大时间。',
         log_stop_sent: '[INFO] 已发送停止信号，等待当前任务完成...',
         status_running_progress: '运行中... ({completed}/{total})',
+        status_stopping_detail: '正在停止，等待当前操作退出...',
         status_done_detail: '已完成（{completed} 成功，{failed} 失败）',
         status_error_detail: '错误：{error}',
     },
@@ -484,6 +487,7 @@ const LANG = {
         card_log: 'Execution Log',
         status_idle: 'Idle',
         status_running: 'Running',
+        status_stopping: 'Stopping',
         status_done: 'Completed',
         status_error: 'Error',
         alert_no_file: 'Please select a task file first.',
@@ -492,6 +496,7 @@ const LANG = {
         alert_min_gt_max: 'Minimum duration cannot be greater than maximum.',
         log_stop_sent: '[INFO] Stop signal sent, waiting for current task to finish...',
         status_running_progress: 'Running... ({completed}/{total})',
+        status_stopping_detail: 'Stopping, waiting for current operation to exit...',
         status_done_detail: 'Completed ({completed} success, {failed} failed)',
         status_error_detail: 'Error: {error}',
     }
@@ -692,6 +697,8 @@ function startLogPolling() {
         // Update status
         if (status.state === 'running') {
             setStatus('running', T('status_running_progress', {completed: status.completed || 0, total: status.total || 0}));
+        } else if (status.state === 'stopping') {
+            setStatus('stopping', T('status_stopping_detail'));
         } else if (status.state === 'done') {
             setStatus('done', T('status_done_detail', {completed: status.completed || 0, failed: status.failed || 0}));
             clearInterval(logPollTimer);
@@ -855,6 +862,7 @@ class LauncherAPI:
         """Stop execution by sending SIGINT to subprocess (same as Ctrl+C)."""
         if self._execution_process and self._execution_process.is_alive():
             self._stop_requested = True
+            self._state = 'stopping'
             # Send SIGINT directly to the subprocess - this interrupts time.sleep(),
             # subprocess calls, etc. exactly like Ctrl+C
             os.kill(self._execution_process.pid, signal.SIGINT)
@@ -893,14 +901,14 @@ class LauncherAPI:
                             self._state = 'error'
                             self._error = msg.get('error', 'Unknown error')
                         elif msg.get('type') == 'interrupted':
-                            self._state = 'done'
+                            self._state = 'stopping'
                     else:
                         # Log line
                         self._log_handler._logs.append(str(msg))
                 except queue_module.Empty:
                     break
 
-            if not proc_alive and self._state == 'running':
+            if not proc_alive and self._state in ('running', 'stopping'):
                 # Process exited without sending a done/error message
                 exitcode = self._execution_process.exitcode
                 if exitcode == 0 or exitcode == -2:  # -2 = SIGINT on some systems
@@ -985,21 +993,38 @@ def _subprocess_worker(params, log_queue):
         if src_dir not in sys.path:
             sys.path.insert(0, src_dir)
 
+        device_ids = None
+        if device_ids_str:
+            normalized_device_ids = device_ids_str.replace('，', ',')
+            device_ids = [d.strip() for d in normalized_device_ids.split(',') if d.strip()]
+
         # Database mode
         if task_source == 'database':
-            from main import run_grouped_batch_mode
+            from main import run_grouped_batch_mode, run_parallel_grouped_db_mode
             db_config = str(Path(__file__).parent.parent / 'config' / 'database.json')
 
-            success = run_grouped_batch_mode(
-                task_file=None,
-                device_id=None,
-                video_duration=video_duration,
-                enable_antibot=True,
-                protection_duration=protection_duration,
-                group_size=group_size,
-                db_config_path=db_config,
-                batch_size=batch_size,
-            )
+            if exec_mode == 'parallel':
+                success = run_parallel_grouped_db_mode(
+                    device_ids=device_ids,
+                    video_duration=video_duration,
+                    enable_antibot=True,
+                    strategy=strategy,
+                    protection_duration=protection_duration,
+                    group_size=group_size,
+                    db_config_path=db_config,
+                    batch_size=batch_size,
+                )
+            else:
+                success = run_grouped_batch_mode(
+                    task_file=None,
+                    device_id=None,
+                    video_duration=video_duration,
+                    enable_antibot=True,
+                    protection_duration=protection_duration,
+                    group_size=group_size,
+                    db_config_path=db_config,
+                    batch_size=batch_size,
+                )
         # Grouped mode (file source, group_size > 0)
         elif group_size > 0:
             from main import run_grouped_batch_mode
@@ -1014,10 +1039,6 @@ def _subprocess_worker(params, log_queue):
             )
         elif exec_mode == 'parallel':
             from core.parallel_executor import run_parallel_mode
-
-            device_ids = None
-            if device_ids_str:
-                device_ids = [d.strip() for d in device_ids_str.split(',') if d.strip()]
 
             success = run_parallel_mode(
                 task_file=task_file,

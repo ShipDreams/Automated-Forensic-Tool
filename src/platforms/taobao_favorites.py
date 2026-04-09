@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class TaobaoFavorites:
     """Taobao favorites operations for pre-screening flow."""
 
-    def __init__(self, adb_controller, ui_locator, antibot=None):
+    def __init__(self, adb_controller, ui_locator, antibot=None, stop_checker=None):
         """
         Initialize favorites operator.
 
@@ -31,8 +31,18 @@ class TaobaoFavorites:
         self.adb = adb_controller
         self.locator = ui_locator
         self.antibot = antibot
+        self._stop_checker = stop_checker
         self._img_locator = None
         self._favorite_scroll_index = 0
+
+    def set_stop_checker(self, stop_checker):
+        """Set a callback returning True when execution should stop."""
+        self._stop_checker = stop_checker
+
+    def _check_stop(self):
+        """Raise when execution has been asked to stop."""
+        if self._stop_checker and self._stop_checker():
+            raise InterruptedError("Execution stopped")
 
     def _get_image_locator(self):
         """Get image locator instance."""
@@ -72,7 +82,16 @@ class TaobaoFavorites:
         """Human-like random delay."""
         import random
         delay = random.uniform(min_ms / 1000, max_ms / 1000)
-        time.sleep(delay)
+        if not self._stop_checker:
+            time.sleep(delay)
+            return
+
+        remaining = delay
+        while remaining > 0:
+            self._check_stop()
+            chunk = min(0.2, remaining)
+            time.sleep(chunk)
+            remaining -= chunk
 
     def _reset_list_navigation_state(self):
         """Reset favorites list cursor."""
@@ -113,6 +132,7 @@ class TaobaoFavorites:
             end_y = int(height * 0.20)
             duration_ms = 340
 
+        self._check_stop()
         logger.info(f"Scrolling favorites list (fine_tune={fine_tune})")
         if not self.adb.swipe(start_x, start_y, start_x, end_y, duration_ms=duration_ms):
             logger.warning("Favorites list swipe failed")
@@ -134,6 +154,7 @@ class TaobaoFavorites:
         """
         logger.info("Navigating to favorites page...")
         self._reset_list_navigation_state()
+        self._check_stop()
 
         # Step 1: Click "我的淘宝" tab
         if not self._click_by_template_first("my_taobao_tab", threshold=0.7):
@@ -151,6 +172,7 @@ class TaobaoFavorites:
                 return False
 
         self._sleep(2000, 3000)
+        self._check_stop()
 
         # Step 2: Click "收藏" entry
         if self._click_by_template_first("favorites_entry", threshold=0.75):
@@ -184,6 +206,7 @@ class TaobaoFavorites:
             Whether clearing was successful
         """
         logger.info("Clearing favorites...")
+        self._check_stop()
 
         # Navigate to favorites
         if not self.navigate_to_favorites():
@@ -191,6 +214,7 @@ class TaobaoFavorites:
             return False
 
         self._sleep(1500, 2500)
+        self._check_stop()
 
         img = self._get_image_locator()
         if not img:
@@ -205,6 +229,7 @@ class TaobaoFavorites:
             return True
 
         self._sleep(1000, 2000)
+        self._check_stop()
 
         # Click "全选" button
         logger.info("Clicking select all...")
@@ -215,6 +240,7 @@ class TaobaoFavorites:
             return False
 
         self._sleep(800, 1200)
+        self._check_stop()
 
         # Click "删除" button
         logger.info("Clicking delete...")
@@ -224,6 +250,7 @@ class TaobaoFavorites:
             return False
 
         self._sleep(1000, 1500)
+        self._check_stop()
 
         # Confirm deletion dialog (try XML for dialog buttons)
         root = self.locator.dump_and_parse()
@@ -247,6 +274,7 @@ class TaobaoFavorites:
                 logger.info("Tapped confirmation area")
 
         self._sleep(1500, 2500)
+        self._check_stop()
 
         logger.info("Favorites cleared")
         return True
@@ -259,6 +287,7 @@ class TaobaoFavorites:
             Whether adding was successful
         """
         logger.info("Adding product to favorites...")
+        self._check_stop()
 
         if self._click_by_template_first("favorite_btn", threshold=0.7):
             logger.info("Product added to favorites via image recognition")
@@ -289,6 +318,7 @@ class TaobaoFavorites:
             Whether click was successful
         """
         logger.info(f"Clicking favorite item at index {index}...")
+        self._check_stop()
 
         screen_size = self.adb.get_screen_size()
         if not screen_size:
@@ -312,12 +342,14 @@ class TaobaoFavorites:
         tap_x, tap_y = self._get_primary_item_tap_point(width, height)
 
         for attempt in range(1, 4):
+            self._check_stop()
             logger.info(f"Tapping favorite item {index} at ({tap_x}, {tap_y}), attempt={attempt}")
             if not self.adb.tap(tap_x, tap_y):
                 logger.warning("Tap failed, retrying...")
                 continue
 
             self._sleep(2500, 3500)
+            self._check_stop()
             if not self._is_on_favorites_page():
                 return True
 
@@ -335,6 +367,7 @@ class TaobaoFavorites:
             Whether navigation back was successful
         """
         logger.info("Going back to favorites list...")
+        self._check_stop()
         self.adb.press_back()
         self._sleep(1500, 2500)
 

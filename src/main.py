@@ -8,7 +8,11 @@ import sys
 import time
 import logging
 import argparse
+import random
 from pathlib import Path
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from threading import Event
 
 # Ensure logs directory exists
 log_dir = Path(__file__).parent.parent / 'logs'
@@ -458,6 +462,271 @@ def _load_taobao_antibot_config() -> dict:
     return {}
 
 
+def _normalize_device_ids(device_ids) -> list[str]:
+    """Normalize device IDs from GUI/CLI input, accepting Chinese commas."""
+    if not device_ids:
+        return []
+
+    if isinstance(device_ids, str):
+        parts = device_ids.replace('，', ',').split(',')
+    else:
+        parts = list(device_ids)
+
+    normalized = []
+    for item in parts:
+        value = str(item).strip()
+        if value:
+            normalized.append(value)
+    return normalized
+
+
+def _resolve_device_ids(device_ids=None) -> list[str]:
+    """Resolve explicit device IDs or auto-discover available devices."""
+    normalized = _normalize_device_ids(device_ids)
+    if normalized:
+        return normalized
+
+    from core.device_manager import DeviceManager
+
+    manager = DeviceManager()
+    devices = manager.get_available_devices()
+    return [device.device_id for device in devices]
+
+
+def _distribute_groups_by_shop(groups, device_ids: list[str], strategy: str) -> "OrderedDict[str, list]":
+    """Distribute grouped evidence work by shop so one shop stays on one device."""
+    shop_groups = OrderedDict()
+    for group in groups:
+        shop_groups.setdefault(group.shop_name, []).append(group)
+
+    distribution = OrderedDict((device_id, []) for device_id in device_ids)
+    if not device_ids:
+        return distribution
+
+    shop_loads = {device_id: 0 for device_id in device_ids}
+
+    for index, (shop_name, assigned_groups) in enumerate(shop_groups.items()):
+        if strategy == 'load_balance':
+            device_id = min(
+                device_ids,
+                key=lambda current: (shop_loads[current], len(distribution[current]))
+            )
+        elif strategy == 'random':
+            device_id = random.choice(device_ids)
+        else:
+            device_id = device_ids[index % len(device_ids)]
+
+        distribution[device_id].extend(assigned_groups)
+        shop_task_count = sum(len(group.tasks) for group in assigned_groups)
+        shop_loads[device_id] += shop_task_count
+        logger.info(f"[Parallel DB] Assigned shop '{shop_name}' "
+                    f"({shop_task_count} tasks, {len(assigned_groups)} groups) to {device_id}")
+
+    return distribution
+
+
+def _execute_grouped_shops_on_device(
+    device_id: str,
+    groups,
+    video_duration: int,
+    enable_antibot: bool,
+    protection_duration: list,
+    group_size: int,
+    db_config_path: str,
+    stop_event=None,
+):
+    """Execute grouped DB tasks on one device."""
+    from task.db_task_loader import DBTaskLoader
+    from task.grouped_executor import GroupedExecutor
+    from platforms.taobao_handler import TaobaoHandler
+    from platforms.taobao_favorites import TaobaoFavorites
+
+    logger.info(f"[Parallel DB] Device {device_id} starting {len(groups)} grouped tasks")
+
+    collector = EvidenceCollector(device_id=device_id, enable_antibot=enable_antibot)
+    db_loader = DBTaskLoader(config_path=db_config_path)
+    taobao_antibot = None
+
+    try:
+        if enable_antibot and TaobaoAntiBot:
+            try:
+                taobao_config = _load_taobao_antibot_config()
+                if protection_duration:
+                    taobao_config['protection_duration_minutes'] = protection_duration
+                taobao_antibot = TaobaoAntiBot(
+                    adb_controller=collector.adb,
+                    ui_locator=collector.locator,
+                    config=taobao_config,
+                    device_id=collector.adb.device_id
+                )
+                logger.info(f"[Parallel DB] AntiBot enabled for {device_id}")
+
+                if taobao_antibot.is_cooling_down():
+                    remaining = taobao_antibot.get_remaining_cooldown()
+                    if remaining and remaining.total_seconds() > 0:
+                        logger.warning(t('log.device_in_cooldown', seconds=int(remaining.total_seconds())))
+                        time.sleep(remaining.total_seconds())
+            except Exception as e:
+                logger.warning(t('log.taobao_antibot_init_failed', error=e))
+                taobao_antibot = None
+
+        handler = TaobaoHandler(collector.adb, collector.locator, collector.antibot)
+        favorites = TaobaoFavorites(
+            collector.adb,
+            collector.locator,
+            collector.antibot,
+            stop_checker=stop_event.is_set if stop_event else None,
+        )
+        executor = GroupedExecutor(
+            collector=collector,
+            favorites=favorites,
+            handler=handler,
+            db_loader=db_loader,
+            group_size=group_size,
+            stop_event=stop_event,
+        )
+
+        results = executor.execute_all_groups(
+            groups=groups,
+            video_duration=video_duration,
+            taobao_antibot=taobao_antibot,
+        )
+
+        success_count = sum(1 for result in results if result.success)
+        fail_count = sum(1 for result in results if not result.success)
+        return {
+            'device_id': device_id,
+            'results': results,
+            'success_count': success_count,
+            'fail_count': fail_count,
+        }
+    finally:
+        try:
+            collector.adb.restore_original_ime()
+        except Exception:
+            pass
+        try:
+            collector.adb.force_stop_app("com.taobao.taobao")
+            collector.adb.force_stop_app("com.taobao.taobao4android")
+            collector.adb.force_stop_app("com.a1010bao.web.rdbao")
+        except Exception:
+            pass
+        db_loader.close()
+
+
+def run_parallel_grouped_db_mode(
+    device_ids=None,
+    video_duration: int = 30,
+    enable_antibot: bool = True,
+    strategy: str = "round_robin",
+    protection_duration: list = None,
+    group_size: int = 3,
+    db_config_path: str = None,
+    batch_size: int = 100,
+):
+    """
+    Parallel grouped DB mode.
+
+    Loads pending tasks from database, keeps each shop on a single device, and
+    executes the existing two-phase grouped evidence flow per device.
+    """
+    logger.info("=" * 60)
+    logger.info("Parallel Grouped Database Mode")
+    logger.info(f"Strategy: {strategy}, Group size: {group_size}, Video duration: {video_duration}s")
+    logger.info("=" * 60)
+
+    resolved_device_ids = _resolve_device_ids(device_ids)
+    if not resolved_device_ids:
+        logger.error(t('log.no_available_devices'))
+        return False
+
+    from task.db_task_loader import DBTaskLoader
+    from task.shop_grouper import ShopGrouper
+
+    bootstrap_loader = DBTaskLoader(config_path=db_config_path)
+    try:
+        tasks = bootstrap_loader.load_batch(batch_size)
+    finally:
+        bootstrap_loader.close()
+
+    if not tasks:
+        logger.error("No pending tasks in database")
+        return False
+
+    logger.info(f"Loaded {len(tasks)} tasks for parallel grouped DB execution")
+
+    grouper = ShopGrouper(group_size=group_size)
+    groups = grouper.group_tasks(tasks)
+    if not groups:
+        logger.error("No groups created from database tasks")
+        return False
+
+    distribution = _distribute_groups_by_shop(groups, resolved_device_ids, strategy)
+    active_distribution = OrderedDict(
+        (device_id, assigned_groups)
+        for device_id, assigned_groups in distribution.items()
+        if assigned_groups
+    )
+
+    for device_id, assigned_groups in active_distribution.items():
+        task_count = sum(len(group.tasks) for group in assigned_groups)
+        shop_names = sorted({group.shop_name for group in assigned_groups})
+        logger.info(f"[Parallel DB] {device_id}: {len(assigned_groups)} groups, "
+                    f"{task_count} tasks, shops={shop_names}")
+
+    if not active_distribution:
+        logger.error("No grouped database tasks were assigned to devices")
+        return False
+
+    results = []
+    stop_event = Event()
+    try:
+        with ThreadPoolExecutor(max_workers=len(active_distribution)) as pool:
+            futures = {
+                pool.submit(
+                    _execute_grouped_shops_on_device,
+                    device_id,
+                    assigned_groups,
+                    video_duration,
+                    enable_antibot,
+                    protection_duration,
+                    group_size,
+                    db_config_path,
+                    stop_event,
+                ): device_id
+                for device_id, assigned_groups in active_distribution.items()
+            }
+
+            for future in as_completed(futures):
+                device_id = futures[future]
+                try:
+                    result = future.result()
+                    results.append(result)
+                    logger.info(f"[Parallel DB] Device {device_id} finished: "
+                                f"{result['success_count']} success, {result['fail_count']} failed")
+                except Exception as e:
+                    logger.error(f"[Parallel DB] Device {device_id} execution failed: {e}", exc_info=True)
+                    results.append({
+                        'device_id': device_id,
+                        'results': [],
+                        'success_count': 0,
+                        'fail_count': len(active_distribution.get(device_id, [])),
+                    })
+    except KeyboardInterrupt:
+        logger.warning("User interrupted parallel grouped DB execution")
+        stop_event.set()
+        raise
+
+    total_success = sum(item['success_count'] for item in results)
+    total_fail = sum(item['fail_count'] for item in results)
+    logger.info("=" * 60)
+    logger.info(f"Parallel grouped DB complete: {total_success} success, {total_fail} failed "
+                f"across {len(results)} active devices")
+    logger.info("=" * 60)
+
+    return total_fail == 0
+
+
 def run_batch_mode(task_file: str, device_id: str = None, video_duration: int = 30, enable_antibot: bool = True, protection_duration: list = None):
     """
     Batch mode: Load tasks from file and execute sequentially.
@@ -691,11 +960,6 @@ def run_grouped_batch_mode(task_file: str = None, device_id: str = None,
             logger.error("No pending tasks in database")
             db_loader.close()
             return False
-        # Mark tasks as running
-        for task in tasks:
-            db_id = task.metadata.get('db_id')
-            if db_id:
-                db_loader.mark_running(int(db_id), collector.adb.device_id or '')
     elif task_file:
         # Load from file
         task_manager = TaskManager()
@@ -893,14 +1157,25 @@ Examples:
             db_config = args.db_config
             if not db_config:
                 db_config = str(Path(__file__).parent.parent / 'config' / 'database.json')
-            success = run_grouped_batch_mode(
-                task_file=None,
-                device_id=args.device,
-                video_duration=args.play_duration,
-                enable_antibot=not args.no_antibot,
-                group_size=args.group_size,
-                db_config_path=db_config,
-            )
+            if args.parallel:
+                device_ids = _normalize_device_ids(args.devices)
+                success = run_parallel_grouped_db_mode(
+                    device_ids=device_ids,
+                    video_duration=args.play_duration,
+                    enable_antibot=not args.no_antibot,
+                    strategy=args.strategy,
+                    group_size=args.group_size,
+                    db_config_path=db_config,
+                )
+            else:
+                success = run_grouped_batch_mode(
+                    task_file=None,
+                    device_id=args.device,
+                    video_duration=args.play_duration,
+                    enable_antibot=not args.no_antibot,
+                    group_size=args.group_size,
+                    db_config_path=db_config,
+                )
             sys.exit(0 if success else 1)
 
         # Grouped mode (from file)

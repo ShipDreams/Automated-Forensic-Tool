@@ -363,6 +363,68 @@ class TestGroupedExecutor(unittest.TestCase):
         self.assertEqual(results[0].invalid_count, 1)
         self.assertEqual(tasks[3].group_id, '测试3店_1')
 
+    def test_fail_and_stop_recording_marks_valid_tasks_failed(self):
+        from task import Task
+        from task.grouped_executor import GroupedExecutor
+        from task.shop_grouper import EvidenceGroup
+
+        class FakeRecorder:
+            def cancel_recording(self):
+                return True
+
+        class FakeCollector:
+            def __init__(self):
+                self.recorder = FakeRecorder()
+
+        class FakeHandler:
+            def reset_qualification_context(self, cleanup_file=False):
+                return None
+
+        class FakeDBLoader:
+            def __init__(self):
+                self.failed = []
+
+            def mark_failed(self, db_id, error):
+                self.failed.append((db_id, error))
+
+        db_loader = FakeDBLoader()
+        executor = GroupedExecutor(FakeCollector(), None, FakeHandler(), db_loader=db_loader, group_size=3)
+        group = EvidenceGroup(shop_name='测试店', group_index=1, tasks=[])
+        group.valid_tasks = [
+            Task.from_url('https://example.com/1', metadata={'db_id': 1}),
+            Task.from_url('https://example.com/2', metadata={'db_id': 2}),
+        ]
+
+        result = executor._fail_and_stop_recording(group, "保存证据失败")
+
+        self.assertFalse(result.success)
+        self.assertEqual(db_loader.failed, [(1, "保存证据失败"), (2, "保存证据失败")])
+
+
+class TestParallelGroupedDbDispatch(unittest.TestCase):
+    """测试数据库模式按店铺分配到多设备"""
+
+    def test_distribute_groups_by_shop_keeps_same_shop_on_same_device(self):
+        from main import _distribute_groups_by_shop
+        from task import Task
+        from task.shop_grouper import EvidenceGroup
+
+        groups = [
+            EvidenceGroup(shop_name='店铺A', group_index=1, tasks=[Task.from_url('https://example.com/a1')]),
+            EvidenceGroup(shop_name='店铺A', group_index=2, tasks=[Task.from_url('https://example.com/a2')]),
+            EvidenceGroup(shop_name='店铺B', group_index=1, tasks=[Task.from_url('https://example.com/b1')]),
+        ]
+
+        distribution = _distribute_groups_by_shop(groups, ['device1', 'device2'], 'round_robin')
+
+        shop_to_devices = {}
+        for device_id, assigned_groups in distribution.items():
+            for group in assigned_groups:
+                shop_to_devices.setdefault(group.shop_name, set()).add(device_id)
+
+        self.assertEqual(shop_to_devices['店铺A'], {'device1'})
+        self.assertEqual(shop_to_devices['店铺B'], {'device2'})
+
 
 class TestTaobaoFavorites(unittest.TestCase):
     """测试淘宝收藏夹点击策略"""
