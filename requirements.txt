@@ -21,6 +21,7 @@ pywebview>=4.0
 # Image recognition (OpenCV)
 opencv-python>=4.8.0
 numpy>=1.24.0
+uiautomator2==3.2.2
 
 # Database (MySQL)
 pymysql>=1.1.0

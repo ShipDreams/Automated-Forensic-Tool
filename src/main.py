@@ -186,7 +186,7 @@ class EvidenceCollector:
             url = "https://www.beijing-time.org/"
             logger.info(t('log.opening_beijing_time', url=url))
 
-            if not self.adb.open_url(url):
+            if not self.adb.show_beijing_time_with_xiaomi_browser():
                 logger.error(t('log.cannot_open_beijing_time'))
                 return False
 

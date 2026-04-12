@@ -473,7 +473,7 @@ class ParallelExecutor:
             recording_started = True
 
             # Display Beijing time
-            if not adb.open_url("https://www.beijing-time.org/"):
+            if not adb.show_beijing_time_with_xiaomi_browser():
                 self._cancel_recording(recorder, recording_started)
                 return False, "Failed to open Beijing time page"
             time.sleep(5)

@@ -192,6 +192,200 @@ class ADBController:
         """Open URL (uses system browser or corresponding app)"""
         return self.start_activity("android.intent.action.VIEW", url)
 
+    def _get_u2_device(self):
+        """Connect to current device through uiautomator2."""
+        try:
+            import uiautomator2 as u2
+
+            logger.info(t('log.u2_connecting_device', device_id=self.device_id or 'default'))
+            if self.device_id:
+                return u2.connect_usb(self.device_id)
+            return u2.connect()
+        except Exception as e:
+            logger.error(t('log.u2_connect_failed', error=e))
+            return None
+
+    def _dismiss_xiaomi_browser_dialogs(self, d) -> None:
+        """Dismiss known Xiaomi browser popups without failing the flow."""
+        try:
+            dialog_root = d(resourceId="com.android.browser:id/dialog_root_view")
+            if dialog_root.exists:
+                cancel_btn = dialog_root.child(text="取消")
+                if cancel_btn.exists:
+                    cancel_btn.click()
+                    logger.info(t('log.xiaomi_browser_dialog_dismissed', name='取消弹框'))
+                    time.sleep(1)
+        except Exception:
+            pass
+
+        try:
+            if d(resourceId="com.android.browser:id/btn_agree").exists:
+                d(resourceId="com.android.browser:id/btn_agree").click()
+                logger.info(t('log.xiaomi_browser_dialog_dismissed', name='同意弹框'))
+                time.sleep(1)
+        except Exception:
+            pass
+
+        try:
+            if d(text="“AI搜索”功能上线").exists:
+                d(text="“AI搜索”功能上线").click()
+                logger.info(t('log.xiaomi_browser_dialog_dismissed', name='AI搜索上线弹框'))
+                time.sleep(1)
+        except Exception:
+            pass
+
+    def _require_u2_exists(self, selector, name: str, timeout: float = 5.0) -> bool:
+        """Wait for a selector and log clearly when not found."""
+        try:
+            if selector.wait(timeout=timeout):
+                return True
+        except Exception:
+            pass
+        logger.error(t('log.xiaomi_browser_missing_element', name=name))
+        return False
+
+    def _clear_xiaomi_browser_data(self, d) -> bool:
+        """Follow the customer-provided Xiaomi browser clear-data flow."""
+        logger.info(t('log.xiaomi_browser_clear_data'))
+        self._dismiss_xiaomi_browser_dialogs(d)
+
+        mine_tab = d(text="我的")
+        mine_tab_alt = d(description="我的")
+        if not self._require_u2_exists(mine_tab, "我的", timeout=8.0):
+            if mine_tab_alt.exists:
+                mine_tab = mine_tab_alt
+            else:
+                return False
+        if not mine_tab.exists:
+            return False
+        mine_tab.click()
+        time.sleep(1)
+
+        self._dismiss_xiaomi_browser_dialogs(d)
+
+        profile_entry = d(resourceId="com.android.browser:id/person_login_clock_container")
+        if not self._require_u2_exists(profile_entry, "person_login_clock_container"):
+            return False
+        profile_entry.click()
+        time.sleep(1)
+
+        for _ in range(2):
+            try:
+                d.swipe_ext("up")
+            except Exception:
+                self.swipe(540, 1800, 540, 600, 300)
+            time.sleep(1)
+
+        clear_data_item = d(resourceId="android:id/title", text="清除数据")
+        if not self._require_u2_exists(clear_data_item, "清除数据"):
+            return False
+        clear_data_item.click()
+        time.sleep(1)
+
+        clean_btn = d(resourceId="com.android.browser:id/btn_clean")
+        fallback_clean_btn = d(resourceId="com.android.browser:id/button")
+        if clean_btn.exists:
+            clean_btn.click()
+        elif fallback_clean_btn.exists:
+            fallback_clean_btn.click()
+        else:
+            logger.error(t('log.xiaomi_browser_missing_element', name='清理按钮'))
+            return False
+        time.sleep(1)
+
+        confirm_btn = d(resourceId="android:id/button1")
+        if not self._require_u2_exists(confirm_btn, "确认按钮"):
+            return False
+        confirm_btn.click()
+        time.sleep(1)
+        logger.info(t('log.xiaomi_browser_clear_data_confirmed'))
+
+        self.press_back()
+        time.sleep(1)
+        self.press_back()
+        time.sleep(1)
+        self._dismiss_xiaomi_browser_dialogs(d)
+
+        home_tab = d(text="主页")
+        if not self._require_u2_exists(home_tab, "主页"):
+            return False
+        home_tab.click()
+        time.sleep(1)
+        return True
+
+    def _search_beijing_time_in_xiaomi_browser(self, d) -> bool:
+        """Search Beijing time in Xiaomi browser."""
+        logger.info(t('log.xiaomi_browser_search_beijing_time'))
+
+        search_hint = d(resourceId="com.android.browser:id/search_hint")
+        if not self._require_u2_exists(search_hint, "搜索框入口"):
+            return False
+        search_hint.click()
+        time.sleep(1)
+
+        search_input = d(resourceId="com.android.browser:id/url")
+        if not self._require_u2_exists(search_input, "搜索输入框"):
+            return False
+        search_input.set_text("北京时间")
+        time.sleep(1)
+
+        search_btn = d(resourceId="com.android.browser:id/rightText")
+        if not self._require_u2_exists(search_btn, "搜索按钮"):
+            return False
+        search_btn.click()
+        time.sleep(3)
+
+        if d(text="中国北京时间 UTC+8").exists:
+            logger.info(t('log.xiaomi_browser_beijing_time_ready'))
+            return True
+
+        baidu_engine = d(resourceId="com.android.browser:id/tv_engine_name", text="百度")
+        if baidu_engine.exists:
+            baidu_engine.click()
+            time.sleep(3)
+
+        if d(text="中国北京时间 UTC+8").exists:
+            logger.info(t('log.xiaomi_browser_beijing_time_ready'))
+            return True
+
+        # Some browser versions open the direct website instead of search results.
+        if d(textContains="北京时间").exists or d(descriptionContains="北京时间").exists:
+            logger.info(t('log.xiaomi_browser_beijing_time_ready'))
+            return True
+
+        logger.error(t('log.xiaomi_browser_missing_element', name='北京时间结果页'))
+        return False
+
+    def show_beijing_time_with_xiaomi_browser(self) -> bool:
+        """Use Xiaomi browser + uiautomator2 to clear data and open Beijing time."""
+        d = None
+        try:
+            logger.info(t('log.xiaomi_browser_flow_start'))
+            d = self._get_u2_device()
+            if not d:
+                return False
+
+            self.force_stop_app('com.android.browser')
+            time.sleep(1)
+            d.app_start('com.android.browser')
+            logger.info(t('log.xiaomi_browser_opened'))
+            time.sleep(5)
+
+            if not self._clear_xiaomi_browser_data(d):
+                return False
+
+            return self._search_beijing_time_in_xiaomi_browser(d)
+        except Exception as e:
+            logger.error(t('log.show_beijing_time_failed', error=e))
+            return False
+        finally:
+            if d is not None:
+                try:
+                    d.stop_uiautomator()
+                    time.sleep(2)
+                except Exception:
+                    pass
+
     def get_device_brand(self) -> str:
         """
         Get device brand.
