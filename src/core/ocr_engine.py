@@ -10,7 +10,9 @@ import logging
 import re
 import threading
 from typing import Dict, List, Optional, Tuple
+import tempfile
 
+import cv2
 from locales import t
 
 logger = logging.getLogger(__name__)
@@ -18,6 +20,7 @@ logger = logging.getLogger(__name__)
 _OCR_LOCAL = threading.local()
 _OCR_SEMAPHORE = threading.BoundedSemaphore(2)
 _OCR_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ocr-worker")
+_OCR_MAX_IMAGE_SIDE = 1280
 
 
 class OCREngine:
@@ -38,16 +41,53 @@ class OCREngine:
     INDIVIDUAL_BUSINESS_MARKERS = ("个体工商户",)
 
     def _get_ocr(self):
-        """Lazily initialize one PaddleOCR 3.4.0 instance per worker thread."""
+        """Lazily initialize one lightweight PaddleOCR instance per worker thread."""
         if not hasattr(_OCR_LOCAL, "instance"):
             logger.info(t('log.ocr_init_start'))
+            os.environ.setdefault("DISABLE_MODEL_SOURCE_CHECK", "True")
             os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
             from paddleocr import PaddleOCR
             _OCR_LOCAL.instance = PaddleOCR(
                 lang='ch',
+                ocr_version='PP-OCRv4',
+                use_doc_orientation_classify=False,
+                use_doc_unwarping=False,
+                use_textline_orientation=False,
+                text_det_limit_side_len=_OCR_MAX_IMAGE_SIDE,
             )
             logger.info(t('log.ocr_init_done'))
         return _OCR_LOCAL.instance
+
+    def _prepare_image_for_ocr(self, image_path: str) -> Tuple[str, Optional[Path]]:
+        """
+        Resize large screenshots before OCR to reduce Windows CPU inference time.
+
+        Returns:
+            (path_to_use, temp_file_to_cleanup)
+        """
+        image = cv2.imread(image_path)
+        if image is None:
+            logger.warning(f"Failed to read OCR image via OpenCV, using original file: {image_path}")
+            return image_path, None
+
+        height, width = image.shape[:2]
+        longest = max(height, width)
+        if longest <= _OCR_MAX_IMAGE_SIDE:
+            return image_path, None
+
+        scale = _OCR_MAX_IMAGE_SIDE / float(longest)
+        resized = cv2.resize(
+            image,
+            (max(1, int(width * scale)), max(1, int(height * scale))),
+            interpolation=cv2.INTER_AREA,
+        )
+
+        temp_dir = Path(tempfile.gettempdir()) / "automated_forensic_tool" / "ocr_resized"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+        temp_path = temp_dir / f"{Path(image_path).stem}_lite{Path(image_path).suffix}"
+        cv2.imwrite(str(temp_path), resized)
+        logger.info(f"OCR image resized for lightweight inference: {temp_path}")
+        return str(temp_path), temp_path
 
     def recognize_text(self, image_path: str) -> List[Dict]:
         """
@@ -57,9 +97,19 @@ class OCREngine:
             [{"text": "...", "confidence": 0.95, "box": [[x1, y1], ...]}]
         """
         logger.info(t('log.ocr_recognition_start', path=image_path))
+        prepared_path, temp_path = self._prepare_image_for_ocr(image_path)
         with _OCR_SEMAPHORE:
             logger.info(t('log.ocr_semaphore_acquired'))
-            result = self._get_ocr().predict(image_path)
+            try:
+                result = self._get_ocr().predict(prepared_path)
+            finally:
+                if temp_path:
+                    try:
+                        temp_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                    except Exception as e:
+                        logger.debug(f"Failed to remove temporary OCR image '{temp_path}': {e}")
         logger.info(t('log.ocr_recognition_done', path=image_path))
 
         texts = []
