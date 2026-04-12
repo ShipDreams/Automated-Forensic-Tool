@@ -93,7 +93,7 @@ class ScreenRecorder:
                 # Step 3: Click popup "Start Now"
                 logger.info(t('log.step_3_click_start_now'))
                 time.sleep(2)  # Wait for popup
-                root = self.locator.dump_and_parse(caller=f"recorder.stop.find_stop.attempt_{attempt}")
+                root = self.locator.dump_and_parse()
                 if not root:
                     logger.error(t('log.cannot_get_dialog_ui'))
                     return False
@@ -110,7 +110,7 @@ class ScreenRecorder:
                 # Step 3.5: Uncheck microphone if checked
                 logger.info("检查麦克风勾选状态...")
                 time.sleep(2)  # Wait for page response
-                root = self.locator.dump_and_parse(caller="recorder.stop.rename_input")
+                root = self.locator.dump_and_parse()
                 if root:
                     mic_checkbox = self.locator.find_shishibao_microphone_checkbox(root)
                     if mic_checkbox and mic_checkbox.node.attrib.get('checked', 'false') == 'true':
