@@ -172,6 +172,7 @@ class ScreenRecorder:
             Whether stop and save was successful
         """
         try:
+            logger.info(f"[stop_recording] enter: wait_time={wait_time}, max_retries={max_retries}, evidence_name={evidence_name or '<empty>'}")
             try:
                 from .ui_locator import UILocator
             except ImportError:
@@ -186,8 +187,10 @@ class ScreenRecorder:
             # Step 1: Open Shishibao App
             logger.info(t('log.step_1_open_shishibao'))
             if not self.adb.open_shishibao_app():
+                logger.error("[stop_recording] open_shishibao_app failed")
                 logger.error(t('log.open_shishibao_failed'))
                 return False
+            logger.info("[stop_recording] open_shishibao_app succeeded")
 
             # Press back to close Taobao page and ensure Shishibao is in foreground
             logger.info(t('log.press_back_close_taobao'))
@@ -203,23 +206,28 @@ class ScreenRecorder:
                 time.sleep(1)
             else:
                 logger.info(t('log.shishibao_in_foreground'))
+            logger.info(f"[stop_recording] current_focus={current_focus or '<empty>'}")
 
             # Step 2: Click "Stop Recording" (with retry mechanism)
             logger.info(t('log.step_2_click_stop_record'))
             stop_btn = None
             for attempt in range(1, max_retries + 1):
+                logger.info(f"[stop_recording] before_find_stop attempt={attempt}")
                 logger.info(t('log.attempt_find_stop_button', attempt=attempt, max_retries=max_retries))
                 time.sleep(3)  # Wait for Shishibao UI to fully load
                 root = self.locator.dump_and_parse(caller=f"recorder.stop.find_stop.attempt_{attempt}")
                 if not root:
+                    logger.warning(f"[stop_recording] find_stop attempt={attempt} root missing")
                     logger.warning(t('log.attempt_cannot_get_ui', attempt=attempt))
                     continue
 
                 stop_btn = self.locator.find_shishibao_stop_record_button(root)
                 if stop_btn:
+                    logger.info(f"[stop_recording] after_find_stop attempt={attempt} found=True")
                     logger.info(t('log.attempt_found_stop_button', attempt=attempt))
                     break
                 else:
+                    logger.warning(f"[stop_recording] after_find_stop attempt={attempt} found=False")
                     logger.warning(t('log.attempt_stop_button_not_found', attempt=attempt))
                     if attempt < max_retries:
                         # Try pressing back to refresh UI
@@ -229,15 +237,19 @@ class ScreenRecorder:
                         time.sleep(2)
 
             if not stop_btn:
+                logger.error("[stop_recording] stop button not found after retries")
                 logger.error(t('log.stop_button_not_found_after_retries', max_retries=max_retries))
                 return False
 
             if not self.locator.click_element(stop_btn):
+                logger.error("[stop_recording] click stop button failed")
                 logger.error(t('log.click_stop_record_failed'))
                 return False
+            logger.info("[stop_recording] after_click_stop")
 
             # Step 3: Input evidence name into filename field (if provided)
             if evidence_name:
+                logger.info("[stop_recording] before_rename")
                 logger.info(f"准备输入证据名称: {evidence_name}")
                 time.sleep(2)  # Wait for save page to load
                 root = self.locator.dump_and_parse(caller="recorder.stop.rename_input")
@@ -290,6 +302,7 @@ class ScreenRecorder:
                             logger.info(f"输入证据名称: {evidence_name}")
                             self.adb.input_text(evidence_name)
                             time.sleep(1)
+                            logger.info("[stop_recording] after_rename")
                         else:
                             logger.warning("无法获取文件名输入框坐标")
                     else:
@@ -298,21 +311,27 @@ class ScreenRecorder:
                     logger.warning("无法获取保存页面UI，跳过证据名称输入")
 
             # Step 4: Click "Save"
+            logger.info("[stop_recording] before_find_save")
             logger.info(t('log.step_3_click_save'))
             time.sleep(2)  # Wait for response
             root = self.locator.dump_and_parse(caller="recorder.stop.find_save")
             if not root:
+                logger.error("[stop_recording] find_save root missing")
                 logger.error(t('log.cannot_get_shishibao_ui'))
                 return False
 
             save_btn = self.locator.find_shishibao_save_button(root)
             if not save_btn:
+                logger.error("[stop_recording] save button not found")
                 logger.error(t('log.save_not_found'))
                 return False
+            logger.info("[stop_recording] after_find_save found=True")
 
             if not self.locator.click_element(save_btn):
+                logger.error("[stop_recording] click save button failed")
                 logger.error(t('log.click_save_failed'))
                 return False
+            logger.info("[stop_recording] after_click_save")
 
             # Step 5: Wait for save to complete
             logger.info(t('log.step_4_wait_save', wait_time=wait_time))
@@ -323,9 +342,11 @@ class ScreenRecorder:
             logger.info(t('log.shishibao_recording_stopped'))
             logger.info(t('log.recording_saved_in_app'))
             logger.info("=" * 60)
+            logger.info("[stop_recording] return True")
             return True
 
         except Exception as e:
+            logger.error(f"[stop_recording] exception: {e}", exc_info=True)
             logger.error(t('log.stop_shishibao_recording_failed', error=e), exc_info=True)
             return False
 

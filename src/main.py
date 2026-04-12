@@ -212,11 +212,19 @@ class EvidenceCollector:
         logger.info("=" * 60)
         logger.info(t('log.stage_export_evidence'))
         logger.info("=" * 60)
+        logger.info(f"[stage_9] enter: evidence_name={evidence_name or '<empty>'}")
 
-        if not self.recorder.stop_recording(evidence_name=evidence_name):
+        try:
+            if not self.recorder.stop_recording(evidence_name=evidence_name):
+                logger.error("[stage_9] recorder.stop_recording returned False")
+                logger.error(t('log.stop_recording_failed'))
+                return False
+        except Exception as e:
+            logger.error(f"[stage_9] recorder.stop_recording raised: {e}", exc_info=True)
             logger.error(t('log.stop_recording_failed'))
             return False
 
+        logger.info("[stage_9] recorder.stop_recording returned True")
         logger.info(t('log.recording_stopped_saved'))
         self.adb.disable_visual_feedback()
 
@@ -224,6 +232,7 @@ class EvidenceCollector:
         if self.antibot:
             self.antibot.record_task_done(success=True)
 
+        logger.info("[stage_9] exit success")
         return True
 
     # ==================== Main Process ====================
