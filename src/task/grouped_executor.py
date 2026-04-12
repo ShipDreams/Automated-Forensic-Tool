@@ -412,8 +412,9 @@ class GroupedExecutor:
                     self.handler.view_qualification()
                     self._check_stop()
 
-                # Go back to favorites list
-                self.favorites.go_back_to_favorites_list()
+                # Only return to favorites when there are more items to process.
+                if i < total_valid - 1:
+                    self.favorites.go_back_to_favorites_list()
 
             # Step 6: Stop recording and save evidence
             if not self.collector.stage_9_export_evidence(evidence_name=group.evidence_name):

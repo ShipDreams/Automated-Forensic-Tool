@@ -380,7 +380,7 @@ class TaobaoFavorites:
                 return True
 
         # Secondary check via XML
-        root = self.locator.dump_and_parse()
+        root = self.locator.dump_and_parse(caller="favorites.back_check")
         if root:
             for node in root.iter():
                 text = node.attrib.get('text', '')

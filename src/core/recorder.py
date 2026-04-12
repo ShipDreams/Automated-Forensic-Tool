@@ -93,7 +93,7 @@ class ScreenRecorder:
                 # Step 3: Click popup "Start Now"
                 logger.info(t('log.step_3_click_start_now'))
                 time.sleep(2)  # Wait for popup
-                root = self.locator.dump_and_parse()
+                root = self.locator.dump_and_parse(caller=f"recorder.stop.find_stop.attempt_{attempt}")
                 if not root:
                     logger.error(t('log.cannot_get_dialog_ui'))
                     return False
@@ -110,7 +110,7 @@ class ScreenRecorder:
                 # Step 3.5: Uncheck microphone if checked
                 logger.info("检查麦克风勾选状态...")
                 time.sleep(2)  # Wait for page response
-                root = self.locator.dump_and_parse()
+                root = self.locator.dump_and_parse(caller="recorder.stop.rename_input")
                 if root:
                     mic_checkbox = self.locator.find_shishibao_microphone_checkbox(root)
                     if mic_checkbox and mic_checkbox.node.attrib.get('checked', 'false') == 'true':
@@ -210,7 +210,7 @@ class ScreenRecorder:
             for attempt in range(1, max_retries + 1):
                 logger.info(t('log.attempt_find_stop_button', attempt=attempt, max_retries=max_retries))
                 time.sleep(3)  # Wait for Shishibao UI to fully load
-                root = self.locator.dump_and_parse()
+                root = self.locator.dump_and_parse(caller=f"recorder.stop.find_stop.attempt_{attempt}")
                 if not root:
                     logger.warning(t('log.attempt_cannot_get_ui', attempt=attempt))
                     continue
@@ -240,7 +240,7 @@ class ScreenRecorder:
             if evidence_name:
                 logger.info(f"准备输入证据名称: {evidence_name}")
                 time.sleep(2)  # Wait for save page to load
-                root = self.locator.dump_and_parse()
+                root = self.locator.dump_and_parse(caller="recorder.stop.rename_input")
                 if root:
                     # Find filename input by exact resource-id
                     filename_input = self.locator.find_element_by_id(
@@ -300,7 +300,7 @@ class ScreenRecorder:
             # Step 4: Click "Save"
             logger.info(t('log.step_3_click_save'))
             time.sleep(2)  # Wait for response
-            root = self.locator.dump_and_parse()
+            root = self.locator.dump_and_parse(caller="recorder.stop.find_save")
             if not root:
                 logger.error(t('log.cannot_get_shishibao_ui'))
                 return False

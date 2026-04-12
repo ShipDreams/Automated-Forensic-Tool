@@ -322,4 +322,14 @@ def extract_company_name_with_status(image_path: str) -> Tuple[Optional[str], Op
 def start_company_name_extraction_async(image_path: str) -> Future:
     """Start OCR company name extraction in the background."""
     logger.info(t('log.ocr_async_submit', path=image_path))
-    return _OCR_EXECUTOR.submit(extract_company_name_with_status, image_path)
+
+    def _run_and_log_result() -> Tuple[Optional[str], Optional[str]]:
+        result = extract_company_name_with_status(image_path)
+        company_name, note = result
+        if company_name:
+            logger.info(f"OCR background result: company_name={company_name}")
+        else:
+            logger.warning(f"OCR background result: note={note or '无结果'}")
+        return result
+
+    return _OCR_EXECUTOR.submit(_run_and_log_result)

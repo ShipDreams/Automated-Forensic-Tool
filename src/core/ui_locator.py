@@ -108,7 +108,7 @@ class UILocator:
         # Image locator (lazy init)
         self.image_locator = None
 
-    def dump_and_parse(self) -> Optional[ET.Element]:
+    def dump_and_parse(self, caller: str = "") -> Optional[ET.Element]:
         """
         Dump and parse UI hierarchy (enhanced version with file verification).
 
@@ -116,35 +116,37 @@ class UILocator:
             XML root node or None
         """
         try:
+            caller_prefix = f"[{caller}] " if caller else ""
+
             # Dump UI hierarchy to device
             device_path = "/sdcard/window_dump.xml"
             if not self.adb.dump_ui_hierarchy(device_path):
-                logger.error(t('log.dump_ui_failed'))
+                logger.error(f"{caller_prefix}{t('log.dump_ui_failed')}")
                 return None
 
             # Verify file exists
             if not self.adb.file_exists(device_path):
-                logger.error(t('log.ui_file_not_exist', path=device_path))
+                logger.error(f"{caller_prefix}{t('log.ui_file_not_exist', path=device_path)}")
                 return None
 
             # Verify file size
             file_size = self.adb.get_file_size(device_path)
             if file_size is None or file_size == 0:
-                logger.error(t('log.ui_file_empty'))
+                logger.error(f"{caller_prefix}{t('log.ui_file_empty')}")
                 return None
 
-            logger.info(t('log.ui_file_size', size=file_size))
+            logger.info(f"{caller_prefix}{t('log.ui_file_size', size=file_size)}")
 
             # Pull to local
             local_path = self.temp_dir / "window_dump.xml"
             if not self.adb.pull_file(device_path, str(local_path)):
-                logger.error(t('log.pull_ui_file_failed'))
+                logger.error(f"{caller_prefix}{t('log.pull_ui_file_failed')}")
                 return None
 
             # Parse XML
             tree = ET.parse(str(local_path))
             self.current_xml_path = str(local_path)
-            logger.info(t('log.ui_parse_success', path=local_path))
+            logger.info(f"{caller_prefix}{t('log.ui_parse_success', path=local_path)}")
 
             # Debug: save timestamped copy for troubleshooting
             self.dump_counter += 1
@@ -152,16 +154,16 @@ class UILocator:
             debug_filename = f"dump_{self.dump_counter:03d}_{timestamp}_{file_size}bytes.xml"
             debug_path = self.debug_dir / debug_filename
             shutil.copy(str(local_path), str(debug_path))
-            logger.info(f"[DEBUG] saved dump copy: {debug_path}")
+            logger.info(f"{caller_prefix}[DEBUG] saved dump copy: {debug_path}")
 
             return tree.getroot()
 
         except ET.ParseError as e:
-            logger.error(t('log.xml_parse_failed', error=e))
-            logger.error(t('log.xml_file_corrupted'))
+            logger.error(f"{caller_prefix}{t('log.xml_parse_failed', error=e)}")
+            logger.error(f"{caller_prefix}{t('log.xml_file_corrupted')}")
             return None
         except Exception as e:
-            logger.error(t('log.dump_and_parse_failed', error=e))
+            logger.error(f"{caller_prefix}{t('log.dump_and_parse_failed', error=e)}")
             return None
 
     def find_element_by_id(self, root: ET.Element, resource_id: str) -> Optional[UIElement]:
