@@ -127,6 +127,7 @@ def run_pyinstaller():
         "--hidden-import", "cv2",
         "--hidden-import", "numpy",
         "--hidden-import", "uiautomator2",
+        "--collect-data", "uiautomator2",
         # Add data files
         "--add-data", f"{CONFIG_DIR}{os.pathsep}config",
         "--add-data", f"{SRC_DIR / 'locales'}{os.pathsep}locales",
