@@ -21,6 +21,7 @@ import sys
 import shutil
 import subprocess
 import urllib.request
+import importlib
 from pathlib import Path
 
 # Paths
@@ -53,6 +54,41 @@ def check_pyinstaller():
     except ImportError:
         print("ERROR: PyInstaller not installed. Run: pip install pyinstaller")
         return False
+
+
+def check_runtime_dependencies():
+    """Validate critical runtime dependencies in the current build environment."""
+    print("Checking runtime dependencies...")
+    print(f"Python executable: {sys.executable}")
+    print(f"Python version: {sys.version.split()[0]}")
+
+    required_modules = [
+        ("webview", "pywebview"),
+        ("cv2", "opencv-python"),
+        ("numpy", "numpy"),
+        ("uiautomator2", "uiautomator2"),
+        ("paddle", "paddlepaddle"),
+        ("paddleocr", "paddleocr"),
+        ("paddlex", "paddlex"),
+    ]
+
+    all_ok = True
+    for module_name, package_name in required_modules:
+        try:
+            module = importlib.import_module(module_name)
+            version = getattr(module, "__version__", "unknown")
+            module_path = getattr(module, "__file__", "<builtin>")
+            print(f"  OK  {package_name}: version={version}, path={module_path}")
+        except Exception as e:
+            all_ok = False
+            print(f"  ERR {package_name}: {e}")
+
+    if not all_ok:
+        print("ERROR: Current build environment is missing required runtime dependencies.")
+        print("Run: python -m pip install -r requirements.txt")
+        return False
+
+    return True
 
 
 def download_webview2_bootstrapper():
@@ -127,7 +163,13 @@ def run_pyinstaller():
         "--hidden-import", "cv2",
         "--hidden-import", "numpy",
         "--hidden-import", "uiautomator2",
+        "--hidden-import", "paddle",
+        "--hidden-import", "paddleocr",
+        "--hidden-import", "paddlex",
         "--collect-data", "uiautomator2",
+        "--collect-all", "paddle",
+        "--collect-all", "paddleocr",
+        "--collect-all", "paddlex",
         # Add data files
         "--add-data", f"{CONFIG_DIR}{os.pathsep}config",
         "--add-data", f"{SRC_DIR / 'locales'}{os.pathsep}locales",
@@ -212,6 +254,9 @@ def main():
     print()
 
     if not check_pyinstaller():
+        sys.exit(1)
+
+    if not check_runtime_dependencies():
         sys.exit(1)
 
     # Step 1: Download WebView2 bootstrapper
