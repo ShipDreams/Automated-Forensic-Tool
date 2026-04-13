@@ -438,6 +438,9 @@ def extract_company_name_with_status_subprocess(
     )
 
     try:
+        creationflags = 0
+        if sys.platform == "win32":
+            creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         completed = subprocess.run(
             cmd,
             cwd=str(worker_root) if is_frozen else module_cwd,
@@ -448,6 +451,7 @@ def extract_company_name_with_status_subprocess(
             errors="replace",
             timeout=timeout_seconds,
             check=False,
+            creationflags=creationflags,
         )
     except subprocess.TimeoutExpired as e:
         stderr_tail = _trim_subprocess_output(e.stderr or "")

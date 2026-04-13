@@ -8,6 +8,7 @@ main packaged GUI process does not need to host PaddleOCR itself.
 
 import sys
 from pathlib import Path
+import importlib.util
 
 
 def main() -> int:
@@ -15,9 +16,14 @@ def main() -> int:
     if str(script_dir) not in sys.path:
         sys.path.insert(0, str(script_dir))
 
-    from core.ocr_engine import _subprocess_cli
+    ocr_engine_path = script_dir / "core" / "ocr_engine.py"
+    spec = importlib.util.spec_from_file_location("ocr_engine_worker", ocr_engine_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"Unable to load OCR worker module: {ocr_engine_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
 
-    return _subprocess_cli()
+    return module._subprocess_cli()
 
 
 if __name__ == "__main__":
