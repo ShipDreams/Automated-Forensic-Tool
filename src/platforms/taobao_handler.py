@@ -438,10 +438,7 @@ class TaobaoHandler(BasePlatformHandler):
             local_capture = self.adb.take_screenshot_to_file()
             if local_capture:
                 self.set_pending_qualification_capture(local_capture)
-                from core.ocr_engine import start_company_name_extraction_async
-                self.set_pending_qualification_ocr_future(
-                    start_company_name_extraction_async(local_capture)
-                )
+                logger.info("OCR task deferred until post-export drain")
             else:
                 logger.warning(t('log.ocr_capture_save_failed'))
 
