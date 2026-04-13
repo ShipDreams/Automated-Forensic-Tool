@@ -13,6 +13,7 @@ import json
 import subprocess
 import sys
 import argparse
+import shutil
 from typing import Dict, List, Optional, Tuple
 import tempfile
 
@@ -354,6 +355,38 @@ def _trim_subprocess_output(output: str, limit: int = 400) -> str:
     return output[-limit:]
 
 
+def _load_worker_python_from_config() -> Optional[str]:
+    """Read optional external OCR python path from config/device.json."""
+    config_path = Path(__file__).resolve().parents[2] / "config" / "device.json"
+    try:
+        if config_path.exists():
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+            configured = payload.get("ocr_settings", {}).get("python_executable")
+            if configured:
+                return str(configured)
+    except Exception as e:
+        logger.warning(f"[ocr_subprocess] failed to load python_executable from config: {e}")
+    return None
+
+
+def _resolve_external_python() -> Optional[str]:
+    """Resolve external Python runtime for packaged OCR worker mode."""
+    candidates = [
+        _load_worker_python_from_config(),
+        os.environ.get("FORENSIC_OCR_PYTHON"),
+        r"C:\Python310\python.exe" if sys.platform == "win32" else None,
+        shutil.which("python"),
+        shutil.which("python3"),
+    ]
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if Path(candidate).exists() or shutil.which(candidate):
+            return candidate
+    return None
+
+
 def extract_company_name_with_status_subprocess(
     image_path: str,
     timeout_seconds: int = 90,
@@ -371,14 +404,26 @@ def extract_company_name_with_status_subprocess(
         return None, "OCR截图缺失"
 
     is_frozen = bool(getattr(sys, "frozen", False))
-    module_cwd = str(Path(__file__).resolve().parents[1])
     if is_frozen:
+        python_executable = _resolve_external_python()
+        if not python_executable:
+            logger.error("[ocr_subprocess] external Python runtime not found for packaged OCR")
+            return None, "未找到OCR所需的Python 3.10环境"
+
+        worker_root = Path(sys.executable).resolve().parent / "worker_src"
+        worker_script = worker_root / "ocr_worker.py"
+        if not worker_script.exists():
+            logger.error(f"[ocr_subprocess] worker script missing: {worker_script}")
+            return None, "OCR worker脚本缺失"
+
         cmd = [
-            sys.executable,
+            python_executable,
+            str(worker_script),
             "--subprocess-ocr",
             image_path,
         ]
     else:
+        module_cwd = str(Path(__file__).resolve().parents[1])
         cmd = [
             sys.executable,
             "-m",
@@ -395,7 +440,7 @@ def extract_company_name_with_status_subprocess(
     try:
         completed = subprocess.run(
             cmd,
-            cwd=None if is_frozen else module_cwd,
+            cwd=str(worker_root) if is_frozen else module_cwd,
             env=env,
             capture_output=True,
             text=True,

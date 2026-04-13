@@ -258,6 +258,9 @@ def run_pyinstaller():
         # Add data files
         "--add-data", f"{CONFIG_DIR}{os.pathsep}config",
         "--add-data", f"{SRC_DIR / 'locales'}{os.pathsep}locales",
+        "--add-data", f"{SRC_DIR / 'ocr_worker.py'}{os.pathsep}worker_src",
+        "--add-data", f"{SRC_DIR / 'core'}{os.pathsep}worker_src/core",
+        "--add-data", f"{SRC_DIR / 'locales'}{os.pathsep}worker_src/locales",
         # Path for imports
         "--paths", str(SRC_DIR),
         # Entry point

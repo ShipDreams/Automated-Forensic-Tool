@@ -17,6 +17,7 @@
     "video_start": 3
   },
   "ocr_settings": {
-    "keep_debug_screenshots": false
+    "keep_debug_screenshots": false,
+    "python_executable": "C:\\Python310\\python.exe"
   }
 }
