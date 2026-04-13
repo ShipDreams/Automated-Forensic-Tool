@@ -378,6 +378,8 @@ def extract_company_name_with_status_subprocess(
         "--subprocess-ocr",
         image_path,
     ]
+    env = os.environ.copy()
+    env["PYTHONIOENCODING"] = "utf-8"
     logger.info(
         f"[ocr_subprocess] start: timeout={timeout_seconds}s, image_path={image_path}"
     )
@@ -386,6 +388,7 @@ def extract_company_name_with_status_subprocess(
         completed = subprocess.run(
             cmd,
             cwd=module_cwd,
+            env=env,
             capture_output=True,
             text=True,
             encoding="utf-8",
@@ -456,7 +459,7 @@ def _subprocess_cli() -> int:
     print(json.dumps({
         "company_name": company_name,
         "note": note,
-    }, ensure_ascii=False))
+    }, ensure_ascii=True))
     return 0
 
 
