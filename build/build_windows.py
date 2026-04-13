@@ -292,6 +292,18 @@ def copy_additional_files():
     else:
         shutil.copytree(CONFIG_DIR, config_dest, dirs_exist_ok=True)
 
+    # Copy external OCR worker sources explicitly. This is more reliable than
+    # depending on PyInstaller add-data for a script that packaged OCR invokes
+    # via an external Python runtime.
+    worker_dest = output_app_dir / "worker_src"
+    worker_dest.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(SRC_DIR / "ocr_worker.py", worker_dest / "ocr_worker.py")
+    shutil.copytree(SRC_DIR / "core", worker_dest / "core", dirs_exist_ok=True)
+    shutil.copytree(SRC_DIR / "locales", worker_dest / "locales", dirs_exist_ok=True)
+    print("  Copied worker_src/ocr_worker.py")
+    print("  Copied worker_src/core/")
+    print("  Copied worker_src/locales/")
+
     # Remove database.json from distribution (contains local credentials)
     db_json = config_dest / "database.json"
     if db_json.exists():

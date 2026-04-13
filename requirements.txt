@@ -7,7 +7,8 @@ plyer>=2.1.0
 pywebview>=4.0
 
 # Python 版本要求
-# python >= 3.8
+# 推荐并验证通过: Python 3.10.x
+# 交付环境请固定使用 Python 3.10.11
 
 # 系统依赖
 # - adb (Android Debug Bridge)
