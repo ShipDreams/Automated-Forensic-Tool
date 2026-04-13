@@ -169,9 +169,12 @@ class BasePlatformHandler(ABC):
         try:
             logger.info(t('log.ocr_finalize_using_screenshot', path=capture_path))
             if ocr_future is None:
-                from core.ocr_engine import extract_company_name_with_status
-                logger.warning(t('log.ocr_async_missing_fallback'))
-                result = extract_company_name_with_status(capture_path)
+                from core.ocr_engine import extract_company_name_with_status_subprocess
+                logger.warning("[ocr_finalize] no background OCR task found; using subprocess OCR")
+                result = extract_company_name_with_status_subprocess(
+                    capture_path,
+                    timeout_seconds=_OCR_FINALIZE_TIMEOUT_SECONDS,
+                )
             else:
                 logger.info(f"{t('log.ocr_async_wait_start')} timeout={_OCR_FINALIZE_TIMEOUT_SECONDS}s")
                 result = ocr_future.result(timeout=_OCR_FINALIZE_TIMEOUT_SECONDS)

@@ -9,6 +9,10 @@ from pathlib import Path
 import logging
 import re
 import threading
+import json
+import subprocess
+import sys
+import argparse
 from typing import Dict, List, Optional, Tuple
 import tempfile
 
@@ -319,6 +323,111 @@ def extract_company_name_with_status(image_path: str) -> Tuple[Optional[str], Op
         return None, f"OCR异常: {e}"
 
 
+def _extract_company_name_with_status_quiet(image_path: str) -> Tuple[Optional[str], Optional[str]]:
+    """Run OCR without emitting Python logger output from the worker process."""
+    logging.disable(logging.CRITICAL)
+    try:
+        return extract_company_name_with_status(image_path)
+    finally:
+        logging.disable(logging.NOTSET)
+
+
+def _parse_subprocess_json(stdout: str) -> Tuple[Optional[str], Optional[str]]:
+    """Parse the last JSON line emitted by the OCR subprocess."""
+    for line in reversed(stdout.splitlines()):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            payload = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        return payload.get("company_name"), payload.get("note")
+    return None, None
+
+
+def _trim_subprocess_output(output: str, limit: int = 400) -> str:
+    """Keep subprocess diagnostics short in parent-process logs."""
+    output = (output or "").strip()
+    if len(output) <= limit:
+        return output
+    return output[-limit:]
+
+
+def extract_company_name_with_status_subprocess(
+    image_path: str,
+    timeout_seconds: int = 90,
+) -> Tuple[Optional[str], Optional[str]]:
+    """
+    Run OCR in a separate Python process so native Paddle failures do not kill
+    the main workflow process.
+    """
+    if not image_path:
+        logger.warning("[ocr_subprocess] skipped: empty image path")
+        return None, "OCR截图缺失"
+
+    if not Path(image_path).exists():
+        logger.warning(f"[ocr_subprocess] skipped: missing image path={image_path}")
+        return None, "OCR截图缺失"
+
+    module_cwd = str(Path(__file__).resolve().parents[1])
+    cmd = [
+        sys.executable,
+        "-m",
+        "core.ocr_engine",
+        "--subprocess-ocr",
+        image_path,
+    ]
+    logger.info(
+        f"[ocr_subprocess] start: timeout={timeout_seconds}s, image_path={image_path}"
+    )
+
+    try:
+        completed = subprocess.run(
+            cmd,
+            cwd=module_cwd,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as e:
+        stderr_tail = _trim_subprocess_output(e.stderr or "")
+        if stderr_tail:
+            logger.error(f"[ocr_subprocess] timeout stderr_tail={stderr_tail}")
+        logger.error(f"[ocr_subprocess] timeout after {timeout_seconds}s")
+        return None, f"OCR超时({timeout_seconds}s)"
+    except Exception as e:
+        logger.error(f"[ocr_subprocess] launch failed: {e}", exc_info=True)
+        return None, f"OCR子进程启动失败: {e}"
+
+    stderr_tail = _trim_subprocess_output(completed.stderr)
+    if completed.returncode != 0:
+        if stderr_tail:
+            logger.error(
+                f"[ocr_subprocess] crashed: exit_code={completed.returncode}, stderr_tail={stderr_tail}"
+            )
+        else:
+            logger.error(f"[ocr_subprocess] crashed: exit_code={completed.returncode}")
+        return None, f"OCR子进程异常退出(exit_code={completed.returncode})"
+
+    company_name, note = _parse_subprocess_json(completed.stdout)
+    if company_name:
+        logger.info(f"[ocr_subprocess] success: company_name={company_name}")
+        return company_name, None
+    if note:
+        logger.warning(f"[ocr_subprocess] completed without company name: note={note}")
+        return None, note
+
+    if stderr_tail:
+        logger.error(f"[ocr_subprocess] invalid output, stderr_tail={stderr_tail}")
+    else:
+        logger.error("[ocr_subprocess] invalid output: missing JSON payload")
+    return None, "OCR子进程未返回结果"
+
+
 def start_company_name_extraction_async(image_path: str) -> Future:
     """Start OCR company name extraction in the background."""
     logger.info(t('log.ocr_async_submit', path=image_path))
@@ -333,3 +442,23 @@ def start_company_name_extraction_async(image_path: str) -> Future:
         return result
 
     return _OCR_EXECUTOR.submit(_run_and_log_result)
+
+
+def _subprocess_cli() -> int:
+    """Internal CLI entry used by the parent process to isolate OCR execution."""
+    parser = argparse.ArgumentParser(add_help=False)
+    parser.add_argument("--subprocess-ocr", dest="image_path")
+    args = parser.parse_args()
+    if not args.image_path:
+        return 2
+
+    company_name, note = _extract_company_name_with_status_quiet(args.image_path)
+    print(json.dumps({
+        "company_name": company_name,
+        "note": note,
+    }, ensure_ascii=False))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_subprocess_cli())
