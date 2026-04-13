@@ -14,9 +14,8 @@ import time
 import sys
 from pathlib import Path
 
-import webview
-
 logger = logging.getLogger(__name__)
+webview = None
 
 # ==================== HTML Template ====================
 
@@ -1139,6 +1138,11 @@ def _install_webview2():
 
 def launch_gui():
     """Launch the pywebview GUI window."""
+    global webview
+    if webview is None:
+        import webview as _webview
+        webview = _webview
+
     # Check WebView2 on Windows
     if sys.platform == 'win32' and not _check_webview2_available():
         logger.warning("WebView2 Runtime not detected, attempting installation...")
@@ -1169,6 +1173,9 @@ def launch_gui():
 def main():
     """Program entry point for standalone GUI executable."""
     multiprocessing.freeze_support()
+    if "--subprocess-ocr" in sys.argv:
+        from core.ocr_engine import _subprocess_cli
+        raise SystemExit(_subprocess_cli())
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s'
