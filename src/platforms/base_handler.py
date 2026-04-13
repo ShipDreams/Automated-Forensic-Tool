@@ -5,7 +5,7 @@ Defines unified interface for e-commerce platform forensics.
 """
 
 from abc import ABC, abstractmethod
-from concurrent.futures import Future
+from concurrent.futures import Future, TimeoutError
 from typing import Optional, Callable
 import json
 import logging
@@ -15,6 +15,7 @@ from locales import t
 
 logger = logging.getLogger(__name__)
 _OCR_DEBUG_SCREENSHOT_KEEP_CACHE: Optional[bool] = None
+_OCR_FINALIZE_TIMEOUT_SECONDS = 90
 
 
 def _should_keep_ocr_debug_screenshots() -> bool:
@@ -172,11 +173,22 @@ class BasePlatformHandler(ABC):
                 logger.warning(t('log.ocr_async_missing_fallback'))
                 result = extract_company_name_with_status(capture_path)
             else:
-                logger.info(t('log.ocr_async_wait_start'))
-                result = ocr_future.result()
+                logger.info(f"{t('log.ocr_async_wait_start')} timeout={_OCR_FINALIZE_TIMEOUT_SECONDS}s")
+                result = ocr_future.result(timeout=_OCR_FINALIZE_TIMEOUT_SECONDS)
                 logger.info(t('log.ocr_async_wait_done'))
+            company_name, note = result
+            if company_name:
+                logger.info(f"[ocr_finalize] success: company_name={company_name}")
+            else:
+                logger.warning(f"[ocr_finalize] completed without company name: note={note or '无结果'}")
             logger.info(t('log.ocr_finalize_finished'))
             return result
+        except TimeoutError:
+            logger.error(f"[ocr_finalize] timeout after {_OCR_FINALIZE_TIMEOUT_SECONDS}s")
+            return None, f"OCR超时({_OCR_FINALIZE_TIMEOUT_SECONDS}s)"
+        except Exception as e:
+            logger.error(f"[ocr_finalize] exception: {e}", exc_info=True)
+            return None, f"OCR异常: {e}"
         finally:
             if _should_keep_ocr_debug_screenshots():
                 logger.info(t('log.ocr_screenshot_kept', path=capture_path))
