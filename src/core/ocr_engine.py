@@ -18,8 +18,8 @@ from locales import t
 logger = logging.getLogger(__name__)
 
 _OCR_LOCAL = threading.local()
-_OCR_SEMAPHORE = threading.BoundedSemaphore(2)
-_OCR_EXECUTOR = ThreadPoolExecutor(max_workers=2, thread_name_prefix="ocr-worker")
+_OCR_SEMAPHORE = threading.BoundedSemaphore(1)
+_OCR_EXECUTOR = ThreadPoolExecutor(max_workers=1, thread_name_prefix="ocr-worker")
 _OCR_MAX_IMAGE_SIDE = 1280
 
 

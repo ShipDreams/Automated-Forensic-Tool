@@ -27,7 +27,18 @@ class GroupResult:
     valid_count: int = 0
     invalid_count: int = 0
     company_name: Optional[str] = None
+    result_note: Optional[str] = None
     failed_urls: List[str] = field(default_factory=list)
+
+
+@dataclass
+class PendingOCRResult:
+    """Deferred OCR completion payload."""
+    group_result: GroupResult
+    valid_tasks: List
+    qualification_issue: Optional[str]
+    capture_path: Optional[str]
+    ocr_future: Optional[object]
 
 
 class GroupedExecutor:
@@ -53,6 +64,7 @@ class GroupedExecutor:
         self.db_loader = db_loader
         self.group_size = max(1, group_size)
         self.stop_event = stop_event
+        self._pending_ocr_results: List[PendingOCRResult] = []
 
     def _check_stop(self):
         """Raise when execution has been asked to stop."""
@@ -153,6 +165,8 @@ class GroupedExecutor:
 
         logger.info(f"Grouped execution complete: executed {executed_count} evidence groups "
                     f"(planned chunks: {planned_total})")
+
+        self._drain_pending_ocr_results()
 
         return results
 
@@ -427,24 +441,15 @@ class GroupedExecutor:
                     company_name=company_name,
                 )
 
-            company_name, result_note = self.handler.finalize_qualification_ocr()
-            if result_note:
-                logger.warning(t('log.ocr_phase2_note', note=result_note))
-            if company_name:
-                logger.info(t('log.ocr_phase2_company_name', company_name=company_name))
-
-            # Mark all valid tasks as completed
-            for task in group.valid_tasks:
-                self._mark_task_completed(task, company_name, result_note)
-
-            return GroupResult(
+            group_result = GroupResult(
                 success=True,
                 evidence_name=group.evidence_name,
                 valid_count=total_valid,
                 invalid_count=len(group.invalid_tasks),
-                company_name=company_name,
                 failed_urls=[t.product_url for t in group.invalid_tasks],
             )
+            self._enqueue_pending_ocr_result(group_result, group.valid_tasks)
+            return group_result
 
         except InterruptedError:
             logger.warning("[Phase 2] Stop requested by user")
@@ -506,6 +511,49 @@ class GroupedExecutor:
                 )
             except Exception as e:
                 logger.warning(f"Failed to update DB for task {task.id}: {e}")
+
+    def _enqueue_pending_ocr_result(self, group_result: GroupResult, valid_tasks: List):
+        """Detach OCR state from handler and enqueue deferred resolution."""
+        qualification_issue, capture_path, ocr_future = self.handler.detach_pending_qualification_ocr()
+        self._pending_ocr_results.append(PendingOCRResult(
+            group_result=group_result,
+            valid_tasks=list(valid_tasks),
+            qualification_issue=qualification_issue,
+            capture_path=capture_path,
+            ocr_future=ocr_future,
+        ))
+        logger.info(
+            f"[ocr_queue] queued result for {group_result.evidence_name}: "
+            f"pending_count={len(self._pending_ocr_results)}"
+        )
+
+    def _drain_pending_ocr_results(self):
+        """Wait for all queued OCR tasks and write back final results."""
+        if not self._pending_ocr_results:
+            logger.info("[ocr_queue] no pending OCR tasks to drain")
+            return
+
+        logger.info(f"[ocr_queue] draining {len(self._pending_ocr_results)} OCR task(s)")
+        while self._pending_ocr_results:
+            pending = self._pending_ocr_results.pop(0)
+            logger.info(f"[ocr_queue] resolving {pending.group_result.evidence_name}")
+            company_name, result_note = self.handler.resolve_detached_qualification_ocr(
+                pending.qualification_issue,
+                pending.capture_path,
+                pending.ocr_future,
+            )
+            pending.group_result.company_name = company_name
+            pending.group_result.result_note = result_note
+
+            if result_note:
+                logger.warning(t('log.ocr_phase2_note', note=result_note))
+            if company_name:
+                logger.info(t('log.ocr_phase2_company_name', company_name=company_name))
+
+            for task in pending.valid_tasks:
+                self._mark_task_completed(task, company_name, result_note)
+
+        logger.info("[ocr_queue] drain complete")
 
     def _cleanup_between_groups(self):
         """Cleanup between groups: close apps, wait."""

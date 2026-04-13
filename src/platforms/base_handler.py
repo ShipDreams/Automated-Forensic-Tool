@@ -201,6 +201,35 @@ class BasePlatformHandler(ABC):
                 except Exception as e:
                     logger.debug(f"Failed to remove qualification capture '{capture_path}': {e}")
 
+    def detach_pending_qualification_ocr(self) -> tuple[Optional[str], Optional[str], Optional[Future]]:
+        """
+        Detach current qualification OCR state for deferred processing.
+
+        Returns:
+            (qualification_issue, capture_path, ocr_future)
+        """
+        qualification_issue = self.consume_qualification_issue()
+        capture_path = self.consume_pending_qualification_capture()
+        ocr_future = self.consume_pending_qualification_ocr_future()
+        return qualification_issue, capture_path, ocr_future
+
+    def resolve_detached_qualification_ocr(
+        self,
+        qualification_issue: Optional[str],
+        capture_path: Optional[str],
+        ocr_future: Optional[Future],
+    ) -> tuple[Optional[str], Optional[str]]:
+        """
+        Resolve a previously detached OCR task and cleanup its cached screenshot.
+
+        Returns:
+            (company_name, note)
+        """
+        self._qualification_issue = qualification_issue
+        self._pending_qualification_capture_path = capture_path
+        self._pending_qualification_ocr_future = ocr_future
+        return self.finalize_qualification_ocr()
+
     @abstractmethod
     def get_platform_name(self) -> str:
         """
