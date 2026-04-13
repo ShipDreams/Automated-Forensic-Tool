@@ -370,14 +370,22 @@ def extract_company_name_with_status_subprocess(
         logger.warning(f"[ocr_subprocess] skipped: missing image path={image_path}")
         return None, "OCR截图缺失"
 
+    is_frozen = bool(getattr(sys, "frozen", False))
     module_cwd = str(Path(__file__).resolve().parents[1])
-    cmd = [
-        sys.executable,
-        "-m",
-        "core.ocr_engine",
-        "--subprocess-ocr",
-        image_path,
-    ]
+    if is_frozen:
+        cmd = [
+            sys.executable,
+            "--subprocess-ocr",
+            image_path,
+        ]
+    else:
+        cmd = [
+            sys.executable,
+            "-m",
+            "core.ocr_engine",
+            "--subprocess-ocr",
+            image_path,
+        ]
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     logger.info(
@@ -387,7 +395,7 @@ def extract_company_name_with_status_subprocess(
     try:
         completed = subprocess.run(
             cmd,
-            cwd=module_cwd,
+            cwd=None if is_frozen else module_cwd,
             env=env,
             capture_output=True,
             text=True,
