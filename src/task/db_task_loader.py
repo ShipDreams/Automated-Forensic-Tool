@@ -50,9 +50,10 @@ class DBTaskLoader:
                 sql = f"""SELECT id, goods_url, shop_name, platform, evidence_name, goods_title
                           FROM {self.TABLE}
                           WHERE status = %s
+                            AND platform IN (%s, %s)
                           ORDER BY id ASC
                           LIMIT %s"""
-                cursor.execute(sql, (self.STATUS_PENDING, batch_size))
+                cursor.execute(sql, (self.STATUS_PENDING, '淘宝', '天猫', batch_size))
                 rows = cursor.fetchall()
         except Exception as e:
             logger.error(f"Failed to load tasks from database: {e}")

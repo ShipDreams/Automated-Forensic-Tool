@@ -143,6 +143,16 @@ class GroupedExecutor:
                     else:
                         logger.warning(f"Group '{group.evidence_name}' failed: {result.reason}")
 
+                    if taobao_antibot:
+                        should_protect = taobao_antibot.record_task_done(success=result.success)
+                        status = taobao_antibot.get_status()
+                        logger.info(
+                            f"[AntiBot] groups_in_cycle={status['tasks_in_cycle']}/"
+                            f"{status['tasks_per_cycle_target']}, should_protect={should_protect}"
+                        )
+                        if should_protect:
+                            taobao_antibot.enter_protection_mode(reason="group_cycle_complete")
+
                 except KeyboardInterrupt:
                     logger.warning("Execution interrupted by user")
                     raise
