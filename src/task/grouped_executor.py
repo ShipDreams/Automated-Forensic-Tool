@@ -382,7 +382,8 @@ class GroupedExecutor:
             self.handler.set_screenshot_callback(self.collector.click_screenshot_button)
 
             # Step 2: Show Beijing time anchor
-            self.collector.stage_3_show_beijing_time()
+            if not self.collector.stage_3_show_beijing_time():
+                return self._fail_and_stop_recording(group, "展示北京时间失败")
             self._check_stop()
 
             # Step 3: Open Taobao from app store (for evidence chain)
@@ -410,7 +411,8 @@ class GroupedExecutor:
                     continue
 
                 # Play video
-                self.handler.replay_video_from_start()
+                if not self.handler.replay_video_from_start():
+                    return self._fail_and_stop_recording(group, "开启声音失败")
                 self._check_stop()
 
                 # Wait for video recording duration
@@ -423,12 +425,14 @@ class GroupedExecutor:
                 # Only for the last product: view qualification certificates
                 if i == total_valid - 1:
                     logger.info("Last product in group: viewing qualification certificates")
-                    self.handler.view_qualification()
+                    if not self.handler.view_qualification():
+                        return self._fail_and_stop_recording(group, "资质查看失败")
                     self._check_stop()
 
                 # Only return to favorites when there are more items to process.
                 if i < total_valid - 1:
-                    self.favorites.go_back_to_favorites_list()
+                    if not self.favorites.go_back_to_favorites_list():
+                        return self._fail_and_stop_recording(group, "返回收藏夹失败")
 
             # Step 6: Stop recording and save evidence
             if not self.collector.stage_9_export_evidence(evidence_name=group.evidence_name):

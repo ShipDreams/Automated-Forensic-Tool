@@ -371,27 +371,14 @@ class TaobaoFavorites:
         self.adb.press_back()
         self._sleep(1500, 2500)
 
-        # Verify we're back on favorites page by checking for manage button
         img = self._get_image_locator()
-        if img:
-            match = img.find_template("manage_btn", threshold=0.6)
-            if match:
+        for attempt in range(1, 3):
+            if img and img.find_template("manage_btn", threshold=0.6):
                 logger.info("Successfully returned to favorites list")
                 return True
+            if attempt < 2:
+                logger.warning("Favorites page not confirmed yet, retrying image check...")
+                self._sleep(1200, 1800)
 
-        # Secondary check via XML
-        root = self.locator.dump_and_parse(caller="favorites.back_check")
-        if root:
-            for node in root.iter():
-                text = node.attrib.get('text', '')
-                desc = node.attrib.get('content-desc', '')
-                if '收藏' in text or '收藏' in desc:
-                    logger.info("Detected favorites page indicator")
-                    return True
-
-        # Press back once more if needed
-        logger.info("First back may not have returned to favorites, trying again...")
-        self.adb.press_back()
-        self._sleep(1500, 2000)
-
-        return True  # Assume success to continue flow
+        logger.error("Failed to confirm return to favorites list")
+        return False

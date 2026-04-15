@@ -109,6 +109,7 @@
   "log.xiaomi_browser_flow_start": "开始执行小米浏览器清缓存并打开北京时间流程",
   "log.xiaomi_browser_opened": "✓ 小米浏览器已启动",
   "log.xiaomi_browser_clear_data": "进入小米浏览器清除数据流程",
+  "log.xiaomi_browser_prefetched_screenshot_pos": "清缓存确认前获取到实时保截图按钮位置: ({x}, {y})",
   "log.xiaomi_browser_clear_data_confirmed": "✓ 小米浏览器数据已确认清理",
   "log.xiaomi_browser_search_beijing_time": "在小米浏览器中搜索北京时间",
   "log.xiaomi_browser_beijing_time_ready": "✓ 已到达北京时间页面",

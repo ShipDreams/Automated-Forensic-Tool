@@ -237,10 +237,10 @@ class TaobaoHandler(BasePlatformHandler):
         success = self.unmute_video(max_attempts=3, image_only=True)
         if success:
             logger.info(t('log.video_replay_started'))
-        else:
-            logger.warning(t('log.unmute_failed_continue'))
+            return True
 
-        return True
+        logger.warning(t('log.unmute_failed_continue'))
+        return False
 
     def unmute_video(self, max_attempts: int = 3, image_only: bool = True) -> bool:
         """Unmute video audio. Prefer direct image recognition when templates exist."""

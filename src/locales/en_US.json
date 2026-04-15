@@ -109,6 +109,7 @@
   "log.xiaomi_browser_flow_start": "Starting Xiaomi browser clear-data and Beijing time flow",
   "log.xiaomi_browser_opened": "Xiaomi browser started",
   "log.xiaomi_browser_clear_data": "Entering Xiaomi browser clear data flow",
+  "log.xiaomi_browser_prefetched_screenshot_pos": "Prefetched Shishibao screenshot button position before confirm: ({x}, {y})",
   "log.xiaomi_browser_clear_data_confirmed": "Xiaomi browser data clear confirmed",
   "log.xiaomi_browser_search_beijing_time": "Searching Beijing time in Xiaomi browser",
   "log.xiaomi_browser_beijing_time_ready": "Beijing time page is ready",

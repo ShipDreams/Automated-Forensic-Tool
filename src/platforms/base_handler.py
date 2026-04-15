@@ -15,7 +15,7 @@ from locales import t
 
 logger = logging.getLogger(__name__)
 _OCR_DEBUG_SCREENSHOT_KEEP_CACHE: Optional[bool] = None
-_OCR_FINALIZE_TIMEOUT_SECONDS = 90
+_OCR_FINALIZE_TIMEOUT_SECONDS = 360
 
 
 def _should_keep_ocr_debug_screenshots() -> bool:

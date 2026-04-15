@@ -296,8 +296,14 @@ class ADBController:
         confirm_btn = d(resourceId="android:id/button1")
         if not self._require_u2_exists(confirm_btn, "确认按钮"):
             return False
+        screenshot_pos = self.get_overlay_button_position()
+        if screenshot_pos:
+            logger.info(t('log.xiaomi_browser_prefetched_screenshot_pos', x=screenshot_pos[0], y=screenshot_pos[1]))
         confirm_btn.click()
-        time.sleep(1)
+        time.sleep(0.5)
+        if screenshot_pos:
+            self.tap(screenshot_pos[0], screenshot_pos[1])
+        time.sleep(0.5)
         logger.info(t('log.xiaomi_browser_clear_data_confirmed'))
 
         self.press_back()
