@@ -300,7 +300,7 @@ class ADBController:
         if screenshot_pos:
             logger.info(t('log.xiaomi_browser_prefetched_screenshot_pos', x=screenshot_pos[0], y=screenshot_pos[1]))
         confirm_btn.click()
-        time.sleep(0.5)
+        time.sleep(1)
         if screenshot_pos:
             self.tap(screenshot_pos[0], screenshot_pos[1])
         time.sleep(0.5)
