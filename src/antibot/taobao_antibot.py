@@ -478,6 +478,22 @@ class TaobaoAntiBot:
 
         return False
 
+    def _restart_taobao_for_browse(self) -> bool:
+        """Force-reset Taobao before browse simulation starts."""
+        logger.info(f"[{self.device_id}] Restarting Taobao before browse simulation")
+        self.adb.force_stop_app(self.TAOBAO_PACKAGE)
+        self._random_sleep(1.0, 2.0)
+
+        self.adb.run_command(f"am start -n {self.TAOBAO_PACKAGE}/.MainTabActivity")
+        self._random_sleep(3.0, 5.0)
+
+        if not self._is_in_taobao():
+            return False
+
+        self._go_to_home_tab()
+        self._random_sleep(1.0, 2.0)
+        return self._is_in_taobao()
+
     def simulate_human_browse(self) -> bool:
         """
         Simulate human browsing behavior.
@@ -490,14 +506,11 @@ class TaobaoAntiBot:
         Returns:
             Whether completed successfully
         """
-        if not self._is_in_taobao():
-            logger.info(t('log.taobao_not_in_app_opening'))
-            self.adb.run_command(f"am start -n {self.TAOBAO_PACKAGE}/.MainTabActivity")
-            self._random_sleep(3.0, 5.0)  # Wait for Taobao to start
-            if not self._is_in_taobao():
-                logger.warning(t('log.taobao_cannot_open_skip_browse'))
-                return False
-            logger.info(t('log.taobao_opened'))
+        logger.info(t('log.taobao_not_in_app_opening'))
+        if not self._restart_taobao_for_browse():
+            logger.warning(t('log.taobao_cannot_open_skip_browse'))
+            return False
+        logger.info(t('log.taobao_opened'))
 
         # Randomly decide browse duration
         browse_duration = random.uniform(
