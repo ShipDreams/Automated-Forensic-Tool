@@ -263,10 +263,10 @@ class ADBController:
 
         self._dismiss_xiaomi_browser_dialogs(d)
 
-        profile_entry = d(resourceId="com.android.browser:id/person_login_clock_container")
-        if not self._require_u2_exists(profile_entry, "person_login_clock_container"):
+        settings_btn = d(resourceId="com.android.browser:id/person_setting")
+        if not self._require_u2_exists(settings_btn, "设置按钮"):
             return False
-        profile_entry.click()
+        settings_btn.click()
         time.sleep(1)
 
         for _ in range(2):
