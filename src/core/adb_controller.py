@@ -244,54 +244,89 @@ class ADBController:
         logger.error(t('log.xiaomi_browser_missing_element', name=name))
         return False
 
+    def _click_u2_selector(self, selector, name: str, timeout: float = 5.0) -> bool:
+        """Click a selector, falling back to bounds tap for vendor-customized views."""
+        if not self._require_u2_exists(selector, name, timeout=timeout):
+            return False
+
+        try:
+            selector.click()
+            return True
+        except Exception:
+            pass
+
+        try:
+            info = selector.info
+            bounds = info.get('bounds') if isinstance(info, dict) else None
+            if bounds:
+                center_x = int((bounds['left'] + bounds['right']) / 2)
+                center_y = int((bounds['top'] + bounds['bottom']) / 2)
+                self.tap(center_x, center_y)
+                return True
+        except Exception:
+            pass
+
+        logger.error(t('log.xiaomi_browser_missing_element', name=name))
+        return False
+
     def _clear_xiaomi_browser_data(self, d) -> bool:
         """Follow the customer-provided Xiaomi browser clear-data flow."""
         logger.info(t('log.xiaomi_browser_clear_data'))
         self._dismiss_xiaomi_browser_dialogs(d)
 
-        mine_tab = d(text="我的")
-        mine_tab_alt = d(description="我的")
-        if not self._require_u2_exists(mine_tab, "我的", timeout=8.0):
-            if mine_tab_alt.exists:
-                mine_tab = mine_tab_alt
-            else:
-                return False
-        if not mine_tab.exists:
+        mine_tab = d(resourceId="com.android.browser:id/action_person")
+        if not self._click_u2_selector(mine_tab, "我的", timeout=8.0):
             return False
-        mine_tab.click()
-        time.sleep(1)
+        time.sleep(1.5)
 
         self._dismiss_xiaomi_browser_dialogs(d)
 
         settings_btn = d(resourceId="com.android.browser:id/person_setting")
-        if not self._require_u2_exists(settings_btn, "设置按钮"):
+        if not self._click_u2_selector(settings_btn, "设置按钮", timeout=5.0):
             return False
-        settings_btn.click()
-        time.sleep(1)
+        time.sleep(1.5)
 
-        for _ in range(2):
+        clear_data_row = d(className="android.view.ViewGroup").child(
+            resourceId="android:id/title", text="清除数据"
+        )
+        clear_data_item = d(resourceId="android:id/title", text="清除数据")
+        fallback_clear_data_item = d(text="清除数据")
+        found_clear_data = False
+        for _ in range(5):
+            if clear_data_row.exists or clear_data_item.exists or fallback_clear_data_item.exists:
+                found_clear_data = True
+                break
             try:
                 d.swipe_ext("up")
             except Exception:
                 self.swipe(540, 1800, 540, 600, 300)
-            time.sleep(1)
+            time.sleep(1.5)
 
-        clear_data_item = d(resourceId="android:id/title", text="清除数据")
-        if not self._require_u2_exists(clear_data_item, "清除数据"):
+        if not found_clear_data:
             return False
-        clear_data_item.click()
-        time.sleep(1)
+
+        if clear_data_row.exists:
+            clear_data_target = clear_data_row
+        elif clear_data_item.exists:
+            clear_data_target = clear_data_item
+        else:
+            clear_data_target = fallback_clear_data_item
+        if not self._click_u2_selector(clear_data_target, "清除数据", timeout=2.0):
+            return False
+        time.sleep(1.5)
 
         clean_btn = d(resourceId="com.android.browser:id/btn_clean")
         fallback_clean_btn = d(resourceId="com.android.browser:id/button")
         if clean_btn.exists:
-            clean_btn.click()
+            if not self._click_u2_selector(clean_btn, "一键清理", timeout=2.0):
+                return False
         elif fallback_clean_btn.exists:
-            fallback_clean_btn.click()
+            if not self._click_u2_selector(fallback_clean_btn, "一键清理", timeout=2.0):
+                return False
         else:
             logger.error(t('log.xiaomi_browser_missing_element', name='清理按钮'))
             return False
-        time.sleep(1)
+        time.sleep(1.5)
 
         confirm_btn = d(resourceId="android:id/button1")
         if not self._require_u2_exists(confirm_btn, "确认按钮"):
@@ -300,23 +335,22 @@ class ADBController:
         if screenshot_pos:
             logger.info(t('log.xiaomi_browser_prefetched_screenshot_pos', x=screenshot_pos[0], y=screenshot_pos[1]))
         confirm_btn.click()
-        time.sleep(1)
+        time.sleep(1.5)
         if screenshot_pos:
             self.tap(screenshot_pos[0], screenshot_pos[1])
         time.sleep(0.5)
         logger.info(t('log.xiaomi_browser_clear_data_confirmed'))
 
         self.press_back()
-        time.sleep(1)
+        time.sleep(1.5)
         self.press_back()
-        time.sleep(1)
+        time.sleep(1.5)
         self._dismiss_xiaomi_browser_dialogs(d)
 
-        home_tab = d(text="主页")
-        if not self._require_u2_exists(home_tab, "主页"):
+        home_tab = d(resourceId="com.android.browser:id/action_info")
+        if not self._click_u2_selector(home_tab, "主页", timeout=5.0):
             return False
-        home_tab.click()
-        time.sleep(1)
+        time.sleep(1.5)
         return True
 
     def _search_beijing_time_in_xiaomi_browser(self, d) -> bool:
@@ -327,13 +361,13 @@ class ADBController:
         if not self._require_u2_exists(search_hint, "搜索框入口"):
             return False
         search_hint.click()
-        time.sleep(1)
+        time.sleep(1.5)
 
         search_input = d(resourceId="com.android.browser:id/url")
         if not self._require_u2_exists(search_input, "搜索输入框"):
             return False
         search_input.set_text("北京时间")
-        time.sleep(1)
+        time.sleep(1.5)
 
         search_btn = d(resourceId="com.android.browser:id/rightText")
         if not self._require_u2_exists(search_btn, "搜索按钮"):
@@ -372,7 +406,7 @@ class ADBController:
                 return False
 
             self.force_stop_app('com.android.browser')
-            time.sleep(1)
+            time.sleep(1.5)
             d.app_start('com.android.browser')
             logger.info(t('log.xiaomi_browser_opened'))
             time.sleep(5)
