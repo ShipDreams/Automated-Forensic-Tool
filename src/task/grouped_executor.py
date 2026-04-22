@@ -103,82 +103,82 @@ class GroupedExecutor:
         shop_task_queues = self._build_shop_task_queues(groups)
         executed_count = 0
 
-        for shop_name, pending_tasks in shop_task_queues.items():
-            group_index = 1
+        try:
+            for shop_name, pending_tasks in shop_task_queues.items():
+                group_index = 1
 
-            while pending_tasks:
-                group = EvidenceGroup(
-                    shop_name=shop_name,
-                    group_index=group_index,
-                    tasks=[],
-                )
+                while pending_tasks:
+                    group = EvidenceGroup(
+                        shop_name=shop_name,
+                        group_index=group_index,
+                        tasks=[],
+                    )
 
-                logger.info("=" * 70)
-                logger.info(f"Processing evidence group {executed_count + 1}: "
-                            f"{group.evidence_name} (remaining shop tasks: {len(pending_tasks)})")
-                logger.info("=" * 70)
-                self._check_stop()
+                    logger.info("=" * 70)
+                    logger.info(f"Processing evidence group {executed_count + 1}: "
+                                f"{group.evidence_name} (remaining shop tasks: {len(pending_tasks)})")
+                    logger.info("=" * 70)
+                    self._check_stop()
 
-                # Check antibot cooldown between groups
-                if taobao_antibot and executed_count > 0:
-                    if hasattr(taobao_antibot, 'check_cooldown'):
-                        remaining = taobao_antibot.check_cooldown()
-                        if remaining > 0:
-                            logger.info(f"Antibot cooldown: waiting {remaining:.0f}s...")
-                            self._sleep(remaining)
+                    # Check antibot cooldown between groups
+                    if taobao_antibot and executed_count > 0:
+                        if hasattr(taobao_antibot, 'check_cooldown'):
+                            remaining = taobao_antibot.check_cooldown()
+                            if remaining > 0:
+                                logger.info(f"Antibot cooldown: waiting {remaining:.0f}s...")
+                                self._sleep(remaining)
 
-                try:
-                    result = self.execute_group(group, video_duration, task_source=pending_tasks)
-                    consumed_count = len(group.tasks)
-                    if consumed_count <= 0:
-                        raise RuntimeError(f"No tasks consumed for group '{group.evidence_name}'")
+                    try:
+                        result = self.execute_group(group, video_duration, task_source=pending_tasks)
+                        consumed_count = len(group.tasks)
+                        if consumed_count <= 0:
+                            raise RuntimeError(f"No tasks consumed for group '{group.evidence_name}'")
 
-                    del pending_tasks[:consumed_count]
-                    results.append(result)
-                    executed_count += 1
+                        del pending_tasks[:consumed_count]
+                        results.append(result)
+                        executed_count += 1
 
-                    if result.success:
-                        logger.info(f"Group '{group.evidence_name}' completed successfully "
-                                    f"({result.valid_count} valid products)")
-                    else:
-                        logger.warning(f"Group '{group.evidence_name}' failed: {result.reason}")
+                        if result.success:
+                            logger.info(f"Group '{group.evidence_name}' completed successfully "
+                                        f"({result.valid_count} valid products)")
+                        else:
+                            logger.warning(f"Group '{group.evidence_name}' failed: {result.reason}")
 
-                    if taobao_antibot:
-                        should_protect = taobao_antibot.record_task_done(success=result.success)
-                        status = taobao_antibot.get_status()
-                        logger.info(
-                            f"[AntiBot] groups_in_cycle={status['tasks_in_cycle']}/"
-                            f"{status['tasks_per_cycle_target']}, should_protect={should_protect}"
-                        )
-                        if should_protect:
-                            taobao_antibot.enter_protection_mode(reason="group_cycle_complete")
+                        if taobao_antibot:
+                            should_protect = taobao_antibot.record_task_done(success=result.success)
+                            status = taobao_antibot.get_status()
+                            logger.info(
+                                f"[AntiBot] groups_in_cycle={status['tasks_in_cycle']}/"
+                                f"{status['tasks_per_cycle_target']}, should_protect={should_protect}"
+                            )
+                            if should_protect:
+                                taobao_antibot.enter_protection_mode(reason="group_cycle_complete")
 
-                except KeyboardInterrupt:
-                    logger.warning("Execution interrupted by user")
-                    raise
-                except InterruptedError:
-                    logger.warning("Execution stopped by user")
-                    raise
-                except Exception as e:
-                    logger.error(f"Group '{group.evidence_name}' error: {e}")
-                    results.append(GroupResult(
-                        success=False,
-                        evidence_name=group.evidence_name,
-                        reason=str(e),
-                    ))
-                    break
-                finally:
-                    # Cleanup between groups
-                    self._cleanup_between_groups()
+                    except KeyboardInterrupt:
+                        logger.warning("Execution interrupted by user")
+                        raise
+                    except InterruptedError:
+                        logger.warning("Execution stopped by user")
+                        raise
+                    except Exception as e:
+                        logger.error(f"Group '{group.evidence_name}' error: {e}")
+                        results.append(GroupResult(
+                            success=False,
+                            evidence_name=group.evidence_name,
+                            reason=str(e),
+                        ))
+                        break
+                    finally:
+                        # Cleanup between groups
+                        self._cleanup_between_groups()
 
-                group_index += 1
+                    group_index += 1
 
-        logger.info(f"Grouped execution complete: executed {executed_count} evidence groups "
-                    f"(planned chunks: {planned_total})")
-
-        self._drain_pending_ocr_results()
-
-        return results
+            logger.info(f"Grouped execution complete: executed {executed_count} evidence groups "
+                        f"(planned chunks: {planned_total})")
+            return results
+        finally:
+            self._drain_pending_ocr_results()
 
     def execute_group(self, group: EvidenceGroup, video_duration: int = 30,
                       task_source: Optional[List] = None) -> GroupResult:
@@ -462,6 +462,8 @@ class GroupedExecutor:
                 invalid_count=len(group.invalid_tasks),
                 failed_urls=[t.product_url for t in group.invalid_tasks],
             )
+            for task in group.valid_tasks:
+                self._mark_task_evidence_saved(task)
             self._enqueue_pending_ocr_result(group_result, group.valid_tasks)
             return group_result
 
@@ -509,22 +511,30 @@ class GroupedExecutor:
             except Exception as e:
                 logger.warning(f"Failed to update DB for task {task.id}: {e}")
 
-    def _mark_task_completed(self, task, company_name: Optional[str] = None,
-                             result_note: Optional[str] = None):
-        """Mark a task as completed, optionally write to database."""
+    def _mark_task_evidence_saved(self, task):
+        """Mark a task as evidence saved immediately after recording export succeeds."""
         if self.db_loader:
             try:
                 db_id = task.metadata.get('db_id') or task.id
-                result_text = "取证成功"
-                if result_note:
-                    result_text = f"{result_text}；{result_note}"
                 self.db_loader.mark_completed(
                     int(db_id),
-                    result=result_text,
-                    company_name=company_name or '',
+                    result=self.db_loader.RESULT_COMPLETED,
                 )
             except Exception as e:
                 logger.warning(f"Failed to update DB for task {task.id}: {e}")
+
+    def _update_task_ocr_result(self, task, company_name: Optional[str] = None,
+                                result_note: Optional[str] = None):
+        """Update OCR-derived fields without changing the saved evidence status/result."""
+        if self.db_loader:
+            try:
+                db_id = task.metadata.get('db_id') or task.id
+                if company_name:
+                    self.db_loader.update_ocr_result(int(db_id), company_name=company_name)
+                elif result_note:
+                    logger.warning(f"Task {task.id} OCR note after evidence saved: {result_note}")
+            except Exception as e:
+                logger.warning(f"Failed to update OCR DB fields for task {task.id}: {e}")
 
     def _enqueue_pending_ocr_result(self, group_result: GroupResult, valid_tasks: List):
         """Detach OCR state from handler and enqueue deferred resolution."""
@@ -565,7 +575,7 @@ class GroupedExecutor:
                 logger.info(t('log.ocr_phase2_company_name', company_name=company_name))
 
             for task in pending.valid_tasks:
-                self._mark_task_completed(task, company_name, result_note)
+                self._update_task_ocr_result(task, company_name, result_note)
 
         logger.info("[ocr_queue] drain complete")
 

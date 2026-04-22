@@ -26,13 +26,23 @@ class EvidenceGroup:
     group_index: int  # 1-based index within the shop
     tasks: List[Task]
     evidence_name: str = ""
+    evidence_base_name: str = ""
     valid_tasks: List[Task] = field(default_factory=list)
     invalid_tasks: List[Task] = field(default_factory=list)
 
     def __post_init__(self):
+        if not self.evidence_base_name:
+            self.evidence_base_name = self._resolve_base_name()
         if not self.evidence_name:
-            platform = "淘宝"
-            self.evidence_name = f"{self.shop_name}_{self.group_index}_{platform}"
+            self.evidence_name = f"{self.evidence_base_name}_{self.group_index}"
+
+    def _resolve_base_name(self) -> str:
+        """Prefer DB evidence_name as the saved evidence base name."""
+        for task in self.tasks:
+            candidate = (task.evidence_name or "").strip()
+            if candidate:
+                return candidate
+        return self.shop_name or "unknown_shop"
 
 
 class ShopGrouper:

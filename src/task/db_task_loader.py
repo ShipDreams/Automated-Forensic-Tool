@@ -6,7 +6,6 @@ Loads forensic tasks from MySQL app_goods table and writes back results.
 
 import logging
 from typing import List, Optional
-from datetime import datetime
 
 from .task_model import Task
 from .db_connector import DatabaseConnector
@@ -19,9 +18,12 @@ class DBTaskLoader:
 
     # Status values matching customer database convention
     STATUS_PENDING = -1
-    STATUS_RUNNING = 0
-    STATUS_COMPLETED = 1
-    STATUS_FAILED = 2
+    STATUS_RUNNING = 1
+    STATUS_COMPLETED = 2
+    STATUS_FAILED = 3
+
+    RESULT_RUNNING = "进行中"
+    RESULT_COMPLETED = "已存证"
 
     TABLE = 'app_goods'
 
@@ -79,7 +81,7 @@ class DBTaskLoader:
 
     def mark_running(self, db_id: int, device_id: str = ''):
         """
-        Mark a task as running (status=0).
+        Mark a task as running.
 
         Args:
             db_id: Database record ID
@@ -89,9 +91,9 @@ class DBTaskLoader:
         try:
             with conn.cursor() as cursor:
                 sql = f"""UPDATE {self.TABLE}
-                          SET status = %s, device_id = %s, modified_at = NOW()
+                          SET status = %s, result = %s, device_id = %s, modified_at = NOW()
                           WHERE id = %s"""
-                cursor.execute(sql, (self.STATUS_RUNNING, device_id, db_id))
+                cursor.execute(sql, (self.STATUS_RUNNING, self.RESULT_RUNNING, device_id, db_id))
             logger.debug(f"Task {db_id} marked as running on device {device_id}")
         except Exception as e:
             logger.error(f"Failed to mark task {db_id} as running: {e}")
@@ -99,7 +101,7 @@ class DBTaskLoader:
     def mark_completed(self, db_id: int, result: str = '',
                        company_name: str = '', evidence_start_time: str = ''):
         """
-        Mark a task as completed (status=1) and write back results.
+        Mark a task as completed and write back results.
 
         Args:
             db_id: Database record ID
@@ -115,16 +117,33 @@ class DBTaskLoader:
                               evidence_start_time = %s, modified_at = NOW()
                           WHERE id = %s"""
                 cursor.execute(sql, (
-                    self.STATUS_COMPLETED, result, company_name,
+                    self.STATUS_COMPLETED, result or self.RESULT_COMPLETED, company_name,
                     evidence_start_time, db_id
                 ))
             logger.info(f"Task {db_id} marked as completed")
         except Exception as e:
             logger.error(f"Failed to mark task {db_id} as completed: {e}")
 
+    def update_ocr_result(self, db_id: int, company_name: str = ''):
+        """
+        Update OCR-derived fields for an already-saved evidence record.
+
+        Keeps the current status/result unchanged.
+        """
+        conn = self.db.get_connection()
+        try:
+            with conn.cursor() as cursor:
+                sql = f"""UPDATE {self.TABLE}
+                          SET company_name = %s, modified_at = NOW()
+                          WHERE id = %s"""
+                cursor.execute(sql, (company_name, db_id))
+            logger.info(f"Task {db_id} OCR fields updated")
+        except Exception as e:
+            logger.error(f"Failed to update OCR result for task {db_id}: {e}")
+
     def mark_failed(self, db_id: int, error: str = ''):
         """
-        Mark a task as failed (status=2).
+        Mark a task as failed.
 
         Args:
             db_id: Database record ID
