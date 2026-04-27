@@ -100,18 +100,21 @@ class GroupedExecutor:
         """
         results = []
         planned_total = len(groups)
-        shop_task_queues = self._build_shop_task_queues(groups)
+        shop_group_plans = self._build_shop_group_plans(groups)
         executed_count = 0
 
         try:
-            for shop_name, pending_tasks in shop_task_queues.items():
-                group_index = 1
+            for shop_name, planned_groups in shop_group_plans.items():
+                pending_tasks = []
+                for planned_group in planned_groups:
+                    pending_tasks.extend(planned_group.tasks)
 
-                while pending_tasks:
+                for planned_group in planned_groups:
                     group = EvidenceGroup(
-                        shop_name=shop_name,
-                        group_index=group_index,
+                        shop_name=planned_group.shop_name,
+                        group_index=planned_group.group_index,
                         tasks=[],
+                        evidence_base_name=planned_group.evidence_base_name,
                     )
 
                     logger.info("=" * 70)
@@ -171,8 +174,6 @@ class GroupedExecutor:
                     finally:
                         # Cleanup between groups
                         self._cleanup_between_groups()
-
-                    group_index += 1
 
             logger.info(f"Grouped execution complete: executed {executed_count} evidence groups "
                         f"(planned chunks: {planned_total})")
@@ -344,14 +345,14 @@ class GroupedExecutor:
 
         return valid_tasks
 
-    def _build_shop_task_queues(self, groups: List[EvidenceGroup]) -> "OrderedDict[str, List]":
-        """Flatten planned groups into per-shop pending task queues."""
-        shop_task_queues = OrderedDict()
+    def _build_shop_group_plans(self, groups: List[EvidenceGroup]) -> "OrderedDict[str, List[EvidenceGroup]]":
+        """Group planned evidence chunks by shop while preserving original naming metadata."""
+        shop_group_plans = OrderedDict()
         for group in groups:
-            if group.shop_name not in shop_task_queues:
-                shop_task_queues[group.shop_name] = []
-            shop_task_queues[group.shop_name].extend(group.tasks)
-        return shop_task_queues
+            if group.shop_name not in shop_group_plans:
+                shop_group_plans[group.shop_name] = []
+            shop_group_plans[group.shop_name].append(group)
+        return shop_group_plans
 
     def _phase2_record_evidence(self, group: EvidenceGroup,
                                  video_duration: int = 30) -> GroupResult:
