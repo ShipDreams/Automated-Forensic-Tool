@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 class TaobaoFavorites:
     """Taobao favorites operations for pre-screening flow."""
 
-    def __init__(self, adb_controller, ui_locator, antibot=None, stop_checker=None):
+    def __init__(self, adb_controller, ui_locator, antibot=None, stop_checker=None, captcha_handler=None):
         """
         Initialize favorites operator.
 
@@ -34,10 +34,21 @@ class TaobaoFavorites:
         self._stop_checker = stop_checker
         self._img_locator = None
         self._favorite_scroll_index = 0
+        self._captcha_handler = captcha_handler
 
     def set_stop_checker(self, stop_checker):
         """Set a callback returning True when execution should stop."""
         self._stop_checker = stop_checker
+
+    def set_captcha_handler(self, captcha_handler):
+        """Set a callback used when an element-finding step is about to fail."""
+        self._captcha_handler = captcha_handler
+
+    def _handle_captcha_before_failure(self, step_name: str) -> str:
+        """Check captcha only when a step is about to fail after retries are exhausted."""
+        if not self._captcha_handler:
+            return "not_detected"
+        return self._captcha_handler(step_name)
 
     def _check_stop(self):
         """Raise when execution has been asked to stop."""
@@ -141,7 +152,7 @@ class TaobaoFavorites:
         self._sleep(1000, 1600)
         return True
 
-    def navigate_to_favorites(self) -> bool:
+    def navigate_to_favorites(self, _captcha_retry_allowed: bool = True) -> bool:
         """
         Navigate to My Favorites page from Taobao home.
 
@@ -165,9 +176,17 @@ class TaobaoFavorites:
 
             my_taobao_tab = self.locator.find_my_taobao_tab(root)
             if not my_taobao_tab:
+                captcha_status = self._handle_captcha_before_failure("navigate_to_favorites_find_my_taobao_tab")
+                if captcha_status == "resolved" and _captcha_retry_allowed:
+                    logger.info("Captcha resolved, retrying navigate_to_favorites once")
+                    return self.navigate_to_favorites(_captcha_retry_allowed=False)
                 logger.error("'我的淘宝' tab not found")
                 return False
             if not self.locator.click_element(my_taobao_tab):
+                captcha_status = self._handle_captcha_before_failure("navigate_to_favorites_click_my_taobao_tab")
+                if captcha_status == "resolved" and _captcha_retry_allowed:
+                    logger.info("Captcha resolved, retrying navigate_to_favorites once")
+                    return self.navigate_to_favorites(_captcha_retry_allowed=False)
                 logger.error("Failed to click '我的淘宝' tab")
                 return False
 
@@ -188,6 +207,10 @@ class TaobaoFavorites:
                 self._sleep(2000, 3000)
                 return True
 
+        captcha_status = self._handle_captcha_before_failure("navigate_to_favorites_find_entry")
+        if captcha_status == "resolved" and _captcha_retry_allowed:
+            logger.info("Captcha resolved, retrying navigate_to_favorites once")
+            return self.navigate_to_favorites(_captcha_retry_allowed=False)
         logger.error("Failed to find favorites entry")
         return False
 
@@ -279,7 +302,7 @@ class TaobaoFavorites:
         logger.info("Favorites cleared")
         return True
 
-    def add_to_favorites(self) -> bool:
+    def add_to_favorites(self, _captcha_retry_allowed: bool = True) -> bool:
         """
         Add current product to favorites (click favorite button on product detail page).
 
@@ -300,10 +323,14 @@ class TaobaoFavorites:
                 self._sleep(1000, 1500)
                 return True
 
+        captcha_status = self._handle_captcha_before_failure("add_to_favorites")
+        if captcha_status == "resolved" and _captcha_retry_allowed:
+            logger.info("Captcha resolved, retrying add_to_favorites once")
+            return self.add_to_favorites(_captcha_retry_allowed=False)
         logger.warning("Failed to find favorite button")
         return False
 
-    def click_favorite_item(self, index: int = 0) -> bool:
+    def click_favorite_item(self, index: int = 0, _captcha_retry_allowed: bool = True) -> bool:
         """
         Click the nth item in favorites list.
 
@@ -356,10 +383,14 @@ class TaobaoFavorites:
             logger.warning("Still on favorites page after tap, adjusting list position...")
             self._scroll_to_next_visible_item(width, height, fine_tune=True)
 
+        captcha_status = self._handle_captcha_before_failure("click_favorite_item")
+        if captcha_status == "resolved" and _captcha_retry_allowed:
+            logger.info("Captcha resolved, retrying click_favorite_item once")
+            return self.click_favorite_item(index=index, _captcha_retry_allowed=False)
         logger.error("Failed to open favorite item after retries")
         return False
 
-    def go_back_to_favorites_list(self) -> bool:
+    def go_back_to_favorites_list(self, _captcha_retry_allowed: bool = True) -> bool:
         """
         Go back from product detail page to favorites list.
 
@@ -380,5 +411,9 @@ class TaobaoFavorites:
                 logger.warning("Favorites page not confirmed yet, retrying image check...")
                 self._sleep(1200, 1800)
 
+        captcha_status = self._handle_captcha_before_failure("go_back_to_favorites_list")
+        if captcha_status == "resolved" and _captcha_retry_allowed:
+            logger.info("Captcha resolved, retrying go_back_to_favorites_list once")
+            return self.go_back_to_favorites_list(_captcha_retry_allowed=False)
         logger.error("Failed to confirm return to favorites list")
         return False

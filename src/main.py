@@ -585,6 +585,7 @@ def _execute_grouped_shops_on_device(
             collector.locator,
             collector.antibot,
             stop_checker=stop_event.is_set if stop_event else None,
+            captcha_handler=handler.handle_captcha_before_step_failure,
         )
         executor = GroupedExecutor(
             collector=collector,
@@ -995,7 +996,12 @@ def run_grouped_batch_mode(task_file: str = None, device_id: str = None,
     handler = TaobaoHandler(collector.adb, collector.locator, collector.antibot)
     # Note: screenshot callback is NOT set here — phase 1 must not trigger screenshots.
     # GroupedExecutor sets it at the start of phase 2 (when Shishibao recording is active).
-    favorites = TaobaoFavorites(collector.adb, collector.locator, collector.antibot)
+    favorites = TaobaoFavorites(
+        collector.adb,
+        collector.locator,
+        collector.antibot,
+        captcha_handler=handler.handle_captcha_before_step_failure,
+    )
 
     # Create executor
     executor = GroupedExecutor(

@@ -79,7 +79,7 @@ class TaobaoHandler(BasePlatformHandler):
         logger.info(t('log.app_store_results_loaded'))
         return True
 
-    def launch_app(self, wait_time: int = 10) -> bool:
+    def launch_app(self, wait_time: int = 10, _captcha_retry_allowed: bool = True) -> bool:
         """
         Enter Taobao app detail page from app-store search results, take proof
         screenshot there, then launch Taobao directly via ADB command.
@@ -96,11 +96,19 @@ class TaobaoHandler(BasePlatformHandler):
 
         entry = self.locator.find_app_store_target_entry(root, app_name_keywords=['淘宝'])
         if not entry:
+            captcha_status = self.handle_captcha_before_step_failure("launch_app_find_entry")
+            if captcha_status == "resolved" and _captcha_retry_allowed:
+                logger.info("Captcha resolved, retrying launch_app once")
+                return self.launch_app(wait_time=wait_time, _captcha_retry_allowed=False)
             logger.error("Target Taobao app entry not found on app-store results page")
             return False
 
         logger.info("Opening Taobao app detail page from search results...")
         if not self.locator.click_element(entry):
+            captcha_status = self.handle_captcha_before_step_failure("launch_app_click_entry")
+            if captcha_status == "resolved" and _captcha_retry_allowed:
+                logger.info("Captcha resolved, retrying launch_app once")
+                return self.launch_app(wait_time=wait_time, _captcha_retry_allowed=False)
             logger.error("Failed to click Taobao app-store entry")
             return False
 
@@ -140,7 +148,7 @@ class TaobaoHandler(BasePlatformHandler):
         logger.warning(t('log.cannot_confirm_app_launch'))
         return True
 
-    def navigate_to_product(self, product_url: str, wait_time: int = 8) -> bool:
+    def navigate_to_product(self, product_url: str, wait_time: int = 8, _captcha_retry_allowed: bool = True) -> bool:
         """Open product link via Taobao search box."""
         logger.info("=" * 60)
         logger.info(t('log.taobao_navigate_to_product'))
@@ -169,6 +177,14 @@ class TaobaoHandler(BasePlatformHandler):
 
                 search_box = self.locator.find_taobao_search_box(root)
                 if not search_box:
+                    captcha_status = self.handle_captcha_before_step_failure("navigate_to_product_search_box")
+                    if captcha_status == "resolved" and _captcha_retry_allowed:
+                        logger.info("Captcha resolved, retrying navigate_to_product once")
+                        return self.navigate_to_product(
+                            product_url=product_url,
+                            wait_time=wait_time,
+                            _captcha_retry_allowed=False,
+                        )
                     logger.error(t('log.search_box_not_found'))
                     return False
 
@@ -200,10 +216,26 @@ class TaobaoHandler(BasePlatformHandler):
                     search_button = self.locator.find_search_button(root)
                     if search_button:
                         if not self.locator.click_element(search_button):
+                            captcha_status = self.handle_captcha_before_step_failure("navigate_to_product_click_search_button")
+                            if captcha_status == "resolved" and _captcha_retry_allowed:
+                                logger.info("Captcha resolved, retrying navigate_to_product once")
+                                return self.navigate_to_product(
+                                    product_url=product_url,
+                                    wait_time=wait_time,
+                                    _captcha_retry_allowed=False,
+                                )
                             logger.error(t('log.click_search_button_failed'))
                             return False
                         self._sleep_after_click()
                     else:
+                        captcha_status = self.handle_captcha_before_step_failure("navigate_to_product_find_search_button")
+                        if captcha_status == "resolved" and _captcha_retry_allowed:
+                            logger.info("Captcha resolved, retrying navigate_to_product once")
+                            return self.navigate_to_product(
+                                product_url=product_url,
+                                wait_time=wait_time,
+                                _captcha_retry_allowed=False,
+                            )
                         logger.error(t('log.search_button_not_found'))
                         return False
                 else:
@@ -265,7 +297,8 @@ class TaobaoHandler(BasePlatformHandler):
         logger.warning(t('log.unmute_failed_continue'))
         return False
 
-    def has_recordable_video(self, max_attempts: int = 3, threshold: float = 0.70) -> bool:
+    def has_recordable_video(self, max_attempts: int = 3, threshold: float = 0.70,
+                             _captcha_retry_allowed: bool = True) -> bool:
         """
         Check whether the current product page exposes the mute/unmute button,
         which is the current business rule for "has recordable video".
@@ -286,9 +319,18 @@ class TaobaoHandler(BasePlatformHandler):
                 self._sleep(800, 1200)
 
         logger.warning("[video_check] mute button not found after retries")
+        captcha_status = self.handle_captcha_before_step_failure("has_recordable_video")
+        if captcha_status == "resolved" and _captcha_retry_allowed:
+            logger.info("Captcha resolved, retrying has_recordable_video once")
+            return self.has_recordable_video(
+                max_attempts=max_attempts,
+                threshold=threshold,
+                _captcha_retry_allowed=False,
+            )
         return False
 
-    def unmute_video(self, max_attempts: int = 3, image_only: bool = True) -> bool:
+    def unmute_video(self, max_attempts: int = 3, image_only: bool = True,
+                     _captcha_retry_allowed: bool = True) -> bool:
         """Unmute video audio. Prefer direct image recognition when templates exist."""
         logger.info("=" * 60)
         logger.info(t('log.unmute_video'))
@@ -336,6 +378,14 @@ class TaobaoHandler(BasePlatformHandler):
                 self._sleep(1500, 2500)
 
         logger.warning(t('log.unmute_failed_continue'))
+        captcha_status = self.handle_captcha_before_step_failure("unmute_video")
+        if captcha_status == "resolved" and _captcha_retry_allowed:
+            logger.info("Captcha resolved, retrying unmute_video once")
+            return self.unmute_video(
+                max_attempts=max_attempts,
+                image_only=image_only,
+                _captcha_retry_allowed=False,
+            )
         return False
 
     def view_shop_info(self) -> bool:

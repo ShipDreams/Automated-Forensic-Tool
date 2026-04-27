@@ -64,6 +64,8 @@ class BasePlatformHandler(ABC):
         self._pending_qualification_capture_path: Optional[str] = None
         self._pending_qualification_ocr_future: Optional[Future] = None
         self._qualification_issue: Optional[str] = None
+        self._non_qualification_captcha_encountered = False
+        self._last_captcha_failure_reason: Optional[str] = None
 
     def set_screenshot_callback(self, callback: Callable[[], bool]):
         """Set screenshot callback function."""
@@ -116,6 +118,23 @@ class BasePlatformHandler(ABC):
     def set_qualification_issue(self, issue: Optional[str]):
         """Cache qualification warning note for post-export handling."""
         self._qualification_issue = issue
+
+    def reset_non_qualification_captcha_state(self):
+        """Reset captcha handling state for non-qualification steps."""
+        self._non_qualification_captcha_encountered = False
+        self._last_captcha_failure_reason = None
+
+    def consume_non_qualification_captcha_encountered(self) -> bool:
+        """Return and clear whether a non-qualification captcha was encountered."""
+        encountered = self._non_qualification_captcha_encountered
+        self._non_qualification_captcha_encountered = False
+        return encountered
+
+    def consume_last_captcha_failure_reason(self) -> Optional[str]:
+        """Return and clear the last captcha-specific failure reason."""
+        reason = self._last_captcha_failure_reason
+        self._last_captcha_failure_reason = None
+        return reason
 
     def consume_pending_qualification_capture(self) -> Optional[str]:
         """Return and clear cached qualification screenshot path."""
@@ -393,7 +412,7 @@ class BasePlatformHandler(ABC):
         root = self.locator.dump_and_parse()
         return self.antibot.is_safe(root)
 
-    def _handle_captcha_if_detected(self) -> bool:
+    def _handle_captcha_if_detected(self, enter_protection_on_failure: bool = True) -> bool:
         """
         Check for captcha and handle it with human assistance if found.
 
@@ -430,7 +449,8 @@ class BasePlatformHandler(ABC):
         if not human_confirmed:
             # Timeout or cancelled → protection mode
             logger.warning(f"[{device_id}] No human response, entering protection mode")
-            if self.antibot and hasattr(self.antibot, 'enter_protection_mode'):
+            self._last_captcha_failure_reason = "验证码超时未处理"
+            if enter_protection_on_failure and self.antibot and hasattr(self.antibot, 'enter_protection_mode'):
                 self.antibot.enter_protection_mode(reason="captcha_timeout")
             return False
 
@@ -442,12 +462,36 @@ class BasePlatformHandler(ABC):
         if root and self.locator.detect_captcha(root):
             # Captcha still present → not actually handled
             logger.warning(f"[{device_id}] Captcha still present after confirmation, entering protection mode")
-            if self.antibot and hasattr(self.antibot, 'enter_protection_mode'):
+            self._last_captcha_failure_reason = "验证码处理后仍未解除"
+            if enter_protection_on_failure and self.antibot and hasattr(self.antibot, 'enter_protection_mode'):
                 self.antibot.enter_protection_mode(reason="captcha_unresolved")
             return False
 
+        self._last_captcha_failure_reason = None
         logger.info(f"[{device_id}] Captcha resolved, continuing current flow")
         return True
+
+    def handle_captcha_before_step_failure(self, step_name: str) -> str:
+        """
+        Detect captcha only when a step is about to fail after exhausting its retries.
+
+        Returns:
+            'not_detected' | 'resolved' | 'failed'
+        """
+        root = self.locator.dump_and_parse(caller=f"captcha.pre_fail.{step_name}")
+        if not root or not self.locator.detect_captcha(root):
+            return "not_detected"
+
+        self._non_qualification_captcha_encountered = True
+        handled = self._handle_captcha_if_detected(enter_protection_on_failure=False)
+        if handled:
+            return "resolved"
+
+        reason = self.consume_last_captcha_failure_reason()
+        if not reason:
+            reason = "验证码超时未处理"
+        self._last_captcha_failure_reason = reason
+        return "failed"
 
     # ==================== Template Method ====================
 

@@ -110,6 +110,7 @@ class GroupedExecutor:
                     pending_tasks.extend(planned_group.tasks)
 
                 for planned_group in planned_groups:
+                    stop_after_current_group = False
                     group = EvidenceGroup(
                         shop_name=planned_group.shop_name,
                         group_index=planned_group.group_index,
@@ -121,6 +122,7 @@ class GroupedExecutor:
                     logger.info(f"Processing evidence group {executed_count + 1}: "
                                 f"{group.evidence_name} (remaining shop tasks: {len(pending_tasks)})")
                     logger.info("=" * 70)
+                    self.handler.reset_non_qualification_captcha_state()
                     self._check_stop()
 
                     # Check antibot cooldown between groups
@@ -147,6 +149,13 @@ class GroupedExecutor:
                         else:
                             logger.warning(f"Group '{group.evidence_name}' failed: {result.reason}")
 
+                        if self.handler.consume_non_qualification_captcha_encountered():
+                            logger.warning(
+                                f"Group '{group.evidence_name}' encountered captcha outside qualification flow; "
+                                "stop scheduling further tasks after current group"
+                            )
+                            stop_after_current_group = True
+
                         if taobao_antibot:
                             should_protect = taobao_antibot.record_task_done(success=result.success)
                             status = taobao_antibot.get_status()
@@ -156,6 +165,8 @@ class GroupedExecutor:
                             )
                             if should_protect:
                                 taobao_antibot.enter_protection_mode(reason="group_cycle_complete")
+                            elif stop_after_current_group:
+                                taobao_antibot.enter_protection_mode(reason="captcha_detected_non_qualification")
 
                     except KeyboardInterrupt:
                         logger.warning("Execution interrupted by user")
@@ -174,6 +185,10 @@ class GroupedExecutor:
                     finally:
                         # Cleanup between groups
                         self._cleanup_between_groups()
+
+                    if stop_after_current_group:
+                        logger.warning("Stopping further grouped tasks after current group due to captcha handling")
+                        return results
 
             logger.info(f"Grouped execution complete: executed {executed_count} evidence groups "
                         f"(planned chunks: {planned_total})")
@@ -271,7 +286,12 @@ class GroupedExecutor:
                     logger.warning(f"Failed to navigate to product: {task.product_url}")
                     task.is_valid = False
                     group.invalid_tasks.append(task)
-                    self._mark_task_failed(task, "无法跳转到商品页面")
+                    failure_reason = self._consume_step_failure_reason("无法跳转到商品页面")
+                    self._mark_task_failed(task, failure_reason)
+                    if "验证码" in failure_reason:
+                        for valid_task in valid_tasks:
+                            self._mark_task_failed(valid_task, failure_reason)
+                        break
                     # Kill and relaunch to reset to home page only when another task remains
                     if has_more_tasks:
                         self.handler.adb.force_stop_app(package_name)
@@ -309,7 +329,12 @@ class GroupedExecutor:
                     logger.info(f"Product has no recordable video: {task.product_url}")
                     task.is_valid = False
                     group.invalid_tasks.append(task)
-                    self._mark_task_failed(task, "商品无视频，无法取证")
+                    failure_reason = self._consume_step_failure_reason("商品无视频，无法取证")
+                    self._mark_task_failed(task, failure_reason)
+                    if "验证码" in failure_reason:
+                        for valid_task in valid_tasks:
+                            self._mark_task_failed(valid_task, failure_reason)
+                        break
                     if has_more_tasks:
                         self.handler.adb.force_stop_app(package_name)
                         self._sleep(2)
@@ -360,6 +385,11 @@ class GroupedExecutor:
                     f"{len(group.invalid_tasks)} invalid")
 
         return valid_tasks
+
+    def _consume_step_failure_reason(self, default_reason: str) -> str:
+        """Prefer a captcha-specific failure reason when one was recorded by the handler."""
+        reason = self.handler.consume_last_captcha_failure_reason()
+        return reason or default_reason
 
     def _build_shop_group_plans(self, groups: List[EvidenceGroup]) -> "OrderedDict[str, List[EvidenceGroup]]":
         """Group planned evidence chunks by shop while preserving original naming metadata."""
@@ -415,14 +445,14 @@ class GroupedExecutor:
 
             # Step 3: Open Taobao from app store (for evidence chain)
             if not self.handler.open_app_from_store():
-                return self._fail_and_stop_recording(group, "无法在应用商店搜索淘宝")
+                return self._fail_and_stop_recording(group, self._consume_step_failure_reason("无法在应用商店搜索淘宝"))
 
             if not self.handler.launch_app():
-                return self._fail_and_stop_recording(group, "无法启动淘宝")
+                return self._fail_and_stop_recording(group, self._consume_step_failure_reason("无法启动淘宝"))
 
             # Step 4: Navigate to favorites list
             if not self.favorites.navigate_to_favorites():
-                return self._fail_and_stop_recording(group, "无法进入收藏夹")
+                return self._fail_and_stop_recording(group, self._consume_step_failure_reason("无法进入收藏夹"))
 
             # Step 5: Process each product from favorites
             total_valid = len(group.valid_tasks)
@@ -433,13 +463,16 @@ class GroupedExecutor:
                 # Click the ith item in favorites
                 if not self.favorites.click_favorite_item(i):
                     logger.warning(f"Failed to click favorite item {i}")
+                    captcha_reason = self._consume_step_failure_reason("")
+                    if captcha_reason:
+                        return self._fail_and_stop_recording(group, captcha_reason)
                     if i == total_valid - 1:
                         self.handler.set_qualification_issue("资质查看失败")
                     continue
 
                 # Play video
                 if not self.handler.replay_video_from_start():
-                    return self._fail_and_stop_recording(group, "开启声音失败")
+                    return self._fail_and_stop_recording(group, self._consume_step_failure_reason("开启声音失败"))
                 self._check_stop()
 
                 # Wait for video recording duration
@@ -459,7 +492,7 @@ class GroupedExecutor:
                 # Only return to favorites when there are more items to process.
                 if i < total_valid - 1:
                     if not self.favorites.go_back_to_favorites_list():
-                        return self._fail_and_stop_recording(group, "返回收藏夹失败")
+                        return self._fail_and_stop_recording(group, self._consume_step_failure_reason("返回收藏夹失败"))
 
             # Step 6: Stop recording and save evidence
             if not self.collector.stage_9_export_evidence(evidence_name=group.evidence_name):
