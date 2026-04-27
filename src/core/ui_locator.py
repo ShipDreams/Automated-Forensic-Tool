@@ -527,6 +527,79 @@ class UILocator:
         logger.error(t('log.open_button_click_failed', max_attempts=max_attempts))
         return False
 
+    def find_app_store_target_entry(
+        self,
+        root: ET.Element,
+        app_name_keywords: Optional[List[str]] = None,
+        action_keywords: Optional[List[str]] = None,
+    ) -> Optional[UIElement]:
+        """
+        Find the installed target app entry in app-store search results.
+
+        Strategy:
+        1. Find rows containing an action button with desc/text "打开" or "升级"
+        2. Walk upward to a clickable row container
+        3. Confirm the same row contains target app name text
+        """
+        if app_name_keywords is None:
+            app_name_keywords = ['淘宝']
+        if action_keywords is None:
+            action_keywords = ['打开', '升级', 'Open', 'UPDATE']
+
+        parent_map = {child: parent for parent in root.iter() for child in parent}
+
+        def _matches_action(node: ET.Element) -> bool:
+            text = node.attrib.get('text', '')
+            desc = node.attrib.get('content-desc', '')
+            return any(keyword == text or keyword in desc for keyword in action_keywords)
+
+        def _subtree_contains_app_name(node: ET.Element) -> bool:
+            for child in node.iter():
+                text = child.attrib.get('text', '')
+                desc = child.attrib.get('content-desc', '')
+                if any(keyword in text or keyword in desc for keyword in app_name_keywords):
+                    return True
+            return False
+
+        def _find_clickable_row(node: ET.Element) -> Optional[UIElement]:
+            current = node
+            while current in parent_map:
+                current = parent_map[current]
+                element = UIElement(current)
+                bounds = element.get_bounds()
+                if not bounds or bounds == (0, 0, 0, 0):
+                    continue
+                width = bounds[2] - bounds[0]
+                if element.clickable and width >= 600:
+                    return element
+            return None
+
+        for node in root.iter():
+            if not _matches_action(node):
+                continue
+            row = _find_clickable_row(node)
+            if not row:
+                continue
+            if _subtree_contains_app_name(row.node):
+                logger.info(f"Found app-store target entry: bounds={row.get_bounds()}, app_keywords={app_name_keywords}")
+                return row
+
+        logger.warning(f"App-store target entry not found for keywords={app_name_keywords}")
+        return None
+
+    def is_app_store_detail_page(self, root: ET.Element, app_name_keywords: Optional[List[str]] = None) -> bool:
+        """Best-effort check whether current app-store page is the target app detail page."""
+        if app_name_keywords is None:
+            app_name_keywords = ['淘宝']
+
+        if self.find_app_store_open_button(root, prefer_first=True):
+            for node in root.iter():
+                text = node.attrib.get('text', '')
+                desc = node.attrib.get('content-desc', '')
+                if any(keyword in text or keyword in desc for keyword in app_name_keywords):
+                    return True
+        return False
+
     def _get_element_area(self, element: UIElement) -> int:
         """Calculate element area"""
         bounds = element.get_bounds()

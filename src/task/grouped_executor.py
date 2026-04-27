@@ -258,6 +258,7 @@ class GroupedExecutor:
 
         for task in tasks_to_process:
             processed_tasks.append(task)
+            has_more_tasks = len(processed_tasks) < len(tasks_to_process)
             task.group_id = f"{group.shop_name}_{group.group_index}"
             self._mark_task_running(task)
             self._check_stop()
@@ -271,11 +272,12 @@ class GroupedExecutor:
                     task.is_valid = False
                     group.invalid_tasks.append(task)
                     self._mark_task_failed(task, "无法跳转到商品页面")
-                    # Kill and relaunch to reset to home page
-                    self.handler.adb.force_stop_app(package_name)
-                    self._sleep(2)
-                    self.handler.adb.launch_app(package_name)
-                    self._sleep(5)
+                    # Kill and relaunch to reset to home page only when another task remains
+                    if has_more_tasks:
+                        self.handler.adb.force_stop_app(package_name)
+                        self._sleep(2)
+                        self.handler.adb.launch_app(package_name)
+                        self._sleep(5)
                     continue
 
                 # Wait for page to fully load (invalid product hints may appear late)
@@ -295,11 +297,24 @@ class GroupedExecutor:
                     task.is_valid = False
                     group.invalid_tasks.append(task)
                     self._mark_task_failed(task, "链接失效")
-                    # Kill and relaunch to reset to home page
-                    self.handler.adb.force_stop_app(package_name)
-                    self._sleep(2)
-                    self.handler.adb.launch_app(package_name)
-                    self._sleep(5)
+                    # Kill and relaunch to reset to home page only when another task remains
+                    if has_more_tasks:
+                        self.handler.adb.force_stop_app(package_name)
+                        self._sleep(2)
+                        self.handler.adb.launch_app(package_name)
+                        self._sleep(5)
+                    continue
+
+                if hasattr(self.handler, 'has_recordable_video') and not self.handler.has_recordable_video(max_attempts=3):
+                    logger.info(f"Product has no recordable video: {task.product_url}")
+                    task.is_valid = False
+                    group.invalid_tasks.append(task)
+                    self._mark_task_failed(task, "商品无视频，无法取证")
+                    if has_more_tasks:
+                        self.handler.adb.force_stop_app(package_name)
+                        self._sleep(2)
+                        self.handler.adb.launch_app(package_name)
+                        self._sleep(5)
                     continue
 
                 # Product is valid, add to favorites
@@ -315,12 +330,13 @@ class GroupedExecutor:
                     logger.info(f"[Phase 1] Reached group capacity ({self.group_size} valid products)")
                     break
 
-                # Kill and relaunch to reset to home page for next product
-                logger.info("Resetting Taobao to home page for next product...")
-                self.handler.adb.force_stop_app(package_name)
-                self._sleep(2)
-                self.handler.adb.launch_app(package_name)
-                self._sleep(5)
+                # Kill and relaunch to reset to home page only when another task remains
+                if has_more_tasks:
+                    logger.info("Resetting Taobao to home page for next product...")
+                    self.handler.adb.force_stop_app(package_name)
+                    self._sleep(2)
+                    self.handler.adb.launch_app(package_name)
+                    self._sleep(5)
 
             except InterruptedError:
                 logger.warning(f"[Phase 1] Stop requested while processing {task.product_url}")

@@ -81,17 +81,40 @@ class TaobaoHandler(BasePlatformHandler):
 
     def launch_app(self, wait_time: int = 10) -> bool:
         """
-        Launch Taobao directly via ADB command.
-
-        Instead of clicking 'Open' button in app store (which may redirect to
-        marketing/promotional tabs like Flash Sale), use ADB monkey command to
-        launch Taobao's main activity, ensuring it opens to the default home page.
+        Enter Taobao app detail page from app-store search results, take proof
+        screenshot there, then launch Taobao directly via ADB command.
         """
         logger.info("=" * 60)
         logger.info(t('log.taobao_launch_from_store'))
         logger.info("=" * 60)
 
-        # Screenshot app store search results as proof of legitimate source
+        logger.info("Finding Taobao entry on app-store search results...")
+        root = self.locator.dump_and_parse(caller="taobao.launch_app.search_results")
+        if not root:
+            logger.error(t('log.cannot_get_ui_hierarchy'))
+            return False
+
+        entry = self.locator.find_app_store_target_entry(root, app_name_keywords=['淘宝'])
+        if not entry:
+            logger.error("Target Taobao app entry not found on app-store results page")
+            return False
+
+        logger.info("Opening Taobao app detail page from search results...")
+        if not self.locator.click_element(entry):
+            logger.error("Failed to click Taobao app-store entry")
+            return False
+
+        self._sleep_after_click()
+        self._sleep(2500, 3500)
+
+        detail_root = self.locator.dump_and_parse(caller="taobao.launch_app.detail_page")
+        if not detail_root:
+            logger.error("Cannot get app-store detail page UI hierarchy")
+            return False
+        if not self.locator.is_app_store_detail_page(detail_root, app_name_keywords=['淘宝']):
+            logger.warning("Current app-store page could not be positively confirmed as Taobao detail page")
+
+        # Screenshot app store detail page as proof of legitimate source
         self.take_screenshot(t('log.screenshot_app_store_proof'))
 
         # Launch Taobao directly via ADB (avoid marketing page from app store)
@@ -240,6 +263,29 @@ class TaobaoHandler(BasePlatformHandler):
             return True
 
         logger.warning(t('log.unmute_failed_continue'))
+        return False
+
+    def has_recordable_video(self, max_attempts: int = 3, threshold: float = 0.70) -> bool:
+        """
+        Check whether the current product page exposes the mute/unmute button,
+        which is the current business rule for "has recordable video".
+        """
+        logger.info("Checking whether product has a recordable video via mute button template...")
+        img_locator = self.locator._get_image_locator()
+        if not img_locator or not img_locator.template_exists("mute_btn"):
+            logger.warning("Mute button template not available; treating product as non-recordable")
+            return False
+
+        for attempt in range(1, max_attempts + 1):
+            logger.info(f"[video_check] attempt {attempt}/{max_attempts}")
+            match = img_locator.find_template("mute_btn", threshold=threshold)
+            if match:
+                logger.info(f"[video_check] mute button detected at ({match[0]}, {match[1]}) confidence={match[2]:.3f}")
+                return True
+            if attempt < max_attempts:
+                self._sleep(800, 1200)
+
+        logger.warning("[video_check] mute button not found after retries")
         return False
 
     def unmute_video(self, max_attempts: int = 3, image_only: bool = True) -> bool:
