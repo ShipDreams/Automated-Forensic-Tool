@@ -141,6 +141,21 @@ class DBTaskLoader:
         except Exception as e:
             logger.error(f"Failed to update OCR result for task {db_id}: {e}")
 
+    def update_evidence_name(self, db_id: int, evidence_name: str):
+        """
+        Update the saved evidence name to match the final Shishibao filename.
+        """
+        conn = self.db.get_connection()
+        try:
+            with conn.cursor() as cursor:
+                sql = f"""UPDATE {self.TABLE}
+                          SET evidence_name = %s, modified_at = NOW()
+                          WHERE id = %s"""
+                cursor.execute(sql, (evidence_name, db_id))
+            logger.info(f"Task {db_id} evidence_name updated to {evidence_name}")
+        except Exception as e:
+            logger.error(f"Failed to update evidence_name for task {db_id}: {e}")
+
     def mark_failed(self, db_id: int, error: str = ''):
         """
         Mark a task as failed.

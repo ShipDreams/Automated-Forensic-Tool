@@ -513,7 +513,7 @@ class GroupedExecutor:
                 failed_urls=[t.product_url for t in group.invalid_tasks],
             )
             for task in group.valid_tasks:
-                self._mark_task_evidence_saved(task)
+                self._mark_task_evidence_saved(task, group.evidence_name)
             self._enqueue_pending_ocr_result(group_result, group.valid_tasks)
             return group_result
 
@@ -561,7 +561,7 @@ class GroupedExecutor:
             except Exception as e:
                 logger.warning(f"Failed to update DB for task {task.id}: {e}")
 
-    def _mark_task_evidence_saved(self, task):
+    def _mark_task_evidence_saved(self, task, final_evidence_name: Optional[str] = None):
         """Mark a task as evidence saved immediately after recording export succeeds."""
         if self.db_loader:
             try:
@@ -570,6 +570,8 @@ class GroupedExecutor:
                     int(db_id),
                     result=self.db_loader.RESULT_COMPLETED,
                 )
+                if final_evidence_name:
+                    self.db_loader.update_evidence_name(int(db_id), final_evidence_name)
             except Exception as e:
                 logger.warning(f"Failed to update DB for task {task.id}: {e}")
 
