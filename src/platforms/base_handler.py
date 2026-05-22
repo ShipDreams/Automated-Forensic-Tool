@@ -66,6 +66,7 @@ class BasePlatformHandler(ABC):
         self._qualification_issue: Optional[str] = None
         self._non_qualification_captcha_encountered = False
         self._last_captcha_failure_reason: Optional[str] = None
+        self._last_flow_failure_reason: Optional[str] = None
 
     def set_screenshot_callback(self, callback: Callable[[], bool]):
         """Set screenshot callback function."""
@@ -123,6 +124,7 @@ class BasePlatformHandler(ABC):
         """Reset captcha handling state for non-qualification steps."""
         self._non_qualification_captcha_encountered = False
         self._last_captcha_failure_reason = None
+        self._last_flow_failure_reason = None
 
     def consume_non_qualification_captcha_encountered(self) -> bool:
         """Return and clear whether a non-qualification captcha was encountered."""
@@ -134,6 +136,16 @@ class BasePlatformHandler(ABC):
         """Return and clear the last captcha-specific failure reason."""
         reason = self._last_captcha_failure_reason
         self._last_captcha_failure_reason = None
+        return reason
+
+    def set_last_flow_failure_reason(self, reason: Optional[str]):
+        """Cache a non-captcha business failure reason for the current task flow."""
+        self._last_flow_failure_reason = reason
+
+    def consume_last_flow_failure_reason(self) -> Optional[str]:
+        """Return and clear the last non-captcha business failure reason."""
+        reason = self._last_flow_failure_reason
+        self._last_flow_failure_reason = None
         return reason
 
     def consume_pending_qualification_capture(self) -> Optional[str]:

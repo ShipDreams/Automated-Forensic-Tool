@@ -469,6 +469,16 @@ class TaobaoHandler(BasePlatformHandler):
         # Screenshot 3: Shop home page
         self.take_screenshot(t('log.screenshot_shop_home'))
 
+        root = self.locator.dump_and_parse(caller="taobao.shop_home.status_check")
+        if root:
+            for node in root.iter():
+                text = node.attrib.get('text', '')
+                desc = node.attrib.get('content-desc', '')
+                if "店铺终止经营公告" in text or "店铺终止经营公告" in desc:
+                    logger.warning("Detected closed shop notice: 店铺终止经营公告")
+                    self.set_last_flow_failure_reason("店铺终止经营")
+                    return False
+
         logger.info(t('log.entered_shop_home'))
         return True
 
@@ -480,9 +490,14 @@ class TaobaoHandler(BasePlatformHandler):
         self.reset_qualification_context(cleanup_file=True)
 
         try:
+            self.set_last_flow_failure_reason(None)
             # First enter shop page
             if not self.view_shop_info():
-                self.set_qualification_issue("资质查看失败")
+                flow_reason = self.consume_last_flow_failure_reason()
+                if not flow_reason:
+                    self.set_qualification_issue("资质查看失败")
+                else:
+                    self.set_last_flow_failure_reason(flow_reason)
                 return False
 
             # 点击"资质证照"按钮（如果首次未找到，只尝试一次广告弹窗关闭）
@@ -589,6 +604,7 @@ class TaobaoHandler(BasePlatformHandler):
         # Default fallback
         return [
             "商品已下架", "宝贝已下架", "该商品已下架",
+            "商品已经下架", "商品已经下架啦", "商品已经下架啦~要不要瞧瞧别的~",
             "商品过期", "宝贝已过期", "已失效",
             "没有找到相应的商品", "该宝贝已不存在",
             "商品不存在", "页面不存在", "抱歉，没有找到",

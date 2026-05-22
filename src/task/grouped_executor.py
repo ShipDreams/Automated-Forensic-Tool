@@ -349,7 +349,24 @@ class GroupedExecutor:
                     logger.info(f"Product added to favorites: {task.product_url}")
                 else:
                     logger.warning(f"Failed to add to favorites: {task.product_url}")
-                    valid_tasks.append(task)  # Still consider valid
+                    task.is_valid = False
+                    group.invalid_tasks.append(task)
+                    failure_reason = (
+                        self.favorites.consume_last_action_failure_reason()
+                        or self._consume_step_failure_reason("收藏失败")
+                    )
+                    self._mark_task_failed(task, failure_reason)
+                    if "验证码" in failure_reason:
+                        for valid_task in valid_tasks:
+                            self._mark_task_failed(valid_task, failure_reason)
+                        break
+                    if has_more_tasks:
+                        logger.info("Resetting Taobao to home page after favorite failure...")
+                        self.handler.adb.force_stop_app(package_name)
+                        self._sleep(2)
+                        self.handler.adb.launch_app(package_name)
+                        self._sleep(5)
+                    continue
 
                 if len(valid_tasks) >= self.group_size:
                     logger.info(f"[Phase 1] Reached group capacity ({self.group_size} valid products)")
@@ -486,7 +503,8 @@ class GroupedExecutor:
                 if i == total_valid - 1:
                     logger.info("Last product in group: viewing qualification certificates")
                     if not self.handler.view_qualification():
-                        return self._fail_and_stop_recording(group, "资质查看失败")
+                        reason = self.handler.consume_last_flow_failure_reason() or "资质查看失败"
+                        return self._fail_and_stop_recording(group, reason)
                     self._check_stop()
 
                 # Only return to favorites when there are more items to process.

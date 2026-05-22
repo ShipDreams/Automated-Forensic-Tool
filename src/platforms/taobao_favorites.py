@@ -35,6 +35,7 @@ class TaobaoFavorites:
         self._img_locator = None
         self._favorite_scroll_index = 0
         self._captcha_handler = captcha_handler
+        self._last_action_failure_reason: Optional[str] = None
 
     def set_stop_checker(self, stop_checker):
         """Set a callback returning True when execution should stop."""
@@ -49,6 +50,12 @@ class TaobaoFavorites:
         if not self._captcha_handler:
             return "not_detected"
         return self._captcha_handler(step_name)
+
+    def consume_last_action_failure_reason(self) -> Optional[str]:
+        """Return and clear the last favorites-action failure reason."""
+        reason = self._last_action_failure_reason
+        self._last_action_failure_reason = None
+        return reason
 
     def _check_stop(self):
         """Raise when execution has been asked to stop."""
@@ -272,29 +279,9 @@ class TaobaoFavorites:
             img.find_and_click("exit_manage_btn", threshold=0.7)
             return False
 
-        self._sleep(1000, 1500)
+        self._sleep(1500, 2200)
         self._check_stop()
-
-        # Confirm deletion dialog (try XML for dialog buttons)
-        root = self.locator.dump_and_parse()
-        confirmed = False
-        if root:
-            for keyword in ['确定', '确认', '删除', 'OK']:
-                btn = self.locator.find_element_by_text(root, keyword, exact=True)
-                if btn:
-                    if self.locator.click_element(btn):
-                        logger.info(f"Confirmed deletion with '{keyword}' button")
-                        confirmed = True
-                        break
-
-        if not confirmed:
-            # Try tapping common confirmation button positions
-            screen_size = self.adb.get_screen_size()
-            if screen_size:
-                w, h = screen_size
-                # Confirmation button typically in center-right of dialog
-                self.adb.tap(w * 3 // 4, h // 2)
-                logger.info("Tapped confirmation area")
+        logger.info("Delete button clicked; assuming favorites clear completed without confirmation dialog")
 
         self._sleep(1500, 2500)
         self._check_stop()
@@ -311,23 +298,64 @@ class TaobaoFavorites:
         """
         logger.info("Adding product to favorites...")
         self._check_stop()
+        self._last_action_failure_reason = None
 
         if self._click_by_template_first("favorite_btn", threshold=0.7):
-            logger.info("Product added to favorites via image recognition")
-            self._sleep(1000, 1500)
-            return True
+            if self._confirm_favorite_success():
+                logger.info("Product added to favorites via image recognition")
+                self._sleep(1000, 1500)
+                return True
+            captcha_status = self._handle_captcha_before_failure("confirm_favorite_success")
+            if captcha_status == "resolved" and _captcha_retry_allowed:
+                logger.info("Captcha resolved, retrying add_to_favorites once")
+                return self.add_to_favorites(_captcha_retry_allowed=False)
+            self._last_action_failure_reason = "收藏失败"
+            logger.warning("Favorite button clicked but success popup was not detected")
+            return False
 
         if self._dismiss_ad_popup_once("Product detail favorite button"):
             if self._click_by_template_first("favorite_btn", threshold=0.7):
-                logger.info("Product added to favorites via image recognition after closing ad popup")
-                self._sleep(1000, 1500)
-                return True
+                if self._confirm_favorite_success():
+                    logger.info("Product added to favorites via image recognition after closing ad popup")
+                    self._sleep(1000, 1500)
+                    return True
+                captcha_status = self._handle_captcha_before_failure("confirm_favorite_success")
+                if captcha_status == "resolved" and _captcha_retry_allowed:
+                    logger.info("Captcha resolved, retrying add_to_favorites once")
+                    return self.add_to_favorites(_captcha_retry_allowed=False)
+                self._last_action_failure_reason = "收藏失败"
+                logger.warning("Favorite button clicked after closing ad popup but success popup was not detected")
+                return False
 
         captcha_status = self._handle_captcha_before_failure("add_to_favorites")
         if captcha_status == "resolved" and _captcha_retry_allowed:
             logger.info("Captcha resolved, retrying add_to_favorites once")
             return self.add_to_favorites(_captcha_retry_allowed=False)
+        self._last_action_failure_reason = "收藏失败"
         logger.warning("Failed to find favorite button")
+        return False
+
+    def _confirm_favorite_success(self) -> bool:
+        """Verify that the favorite success popup appeared after clicking favorite."""
+        img = self._get_image_locator()
+        if not img or not img.template_exists("favorite_success_popup"):
+            logger.warning("Favorite success popup template not available")
+            return False
+
+        # Taobao first shows a transient toast for a few seconds after tapping
+        # favorite; wait for it to disappear before matching the wishlist popup.
+        logger.info("Waiting 5 seconds before checking favorite success popup...")
+        self._sleep(4800, 5400)
+
+        for attempt in range(1, 3):
+            self._check_stop()
+            logger.info(f"Checking favorite success popup, attempt {attempt}/2")
+            if img.find_template("favorite_success_popup", threshold=0.75):
+                logger.info("Favorite success popup detected")
+                return True
+            if attempt < 2:
+                self._sleep(600, 900)
+        logger.warning("Favorite success popup not detected after retries")
         return False
 
     def click_favorite_item(self, index: int = 0, _captcha_retry_allowed: bool = True) -> bool:
